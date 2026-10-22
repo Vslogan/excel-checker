@@ -33,32 +33,38 @@
 
 ## 快速开始
 
+不需要 `pip install -e .`，直接运行根目录下的独立入口即可启动所有服务：
+
 ```bash
 # 创建虚拟环境（建议用 Python 3.13）
 python3.13 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-pip install -e .
+pip install PyQt5 requests
 
-# 头less 模式运行（自检/后台服务）
-excel-checker --config configs/sample.json --nogui
+# 启动图形界面（主窗口：新建/打开/编辑配置、启动剪贴板监控）
+python main.py
 
-# 图形界面模式（主窗口：新建/打开/编辑配置、启动剪贴板监控）
-excel-checker
+# 指定配置文件启动
+python main.py --config configs/sample.json
+
+# 头less 模式运行（仅后台监控剪贴板，适合服务/自检）
+python main.py --config configs/sample.json --nogui
 ```
 
 ## 项目结构
 
 ```
 excel_checker/
-  config.py       规则配置模型：JSON 加载/校验、{{var}} 模板替换
-  engine.py       规则执行引擎：按步骤执行、变量上下文、动作可插拔
-  clipboard.py    剪贴板监控与表格解析（CSV/纯文本/制表符）
+  config.py       规则配置模型：JSON 加载/校验，{{var}} 模板替换
+  engine.py       可插拔动作执行引擎（extract_cell/http_request/user_input/alert/write_clipboard）
+  clipboard.py    剪贴板监控与表格解析（CSV/纯文本/制表符，纯文本视为 1x1）
   controller.py   配置加载/热更新、剪贴板匹配与执行调度
   gui/
     main_window.py   主窗口：配置列表、监控开关、执行日志
     config_editor.py 可视化规则编辑器（积木卡片式）
-  main.py         程序入口
+  main.py         包内入口（供 import 使用）
+main.py           项目独立启动入口（直接运行启动所有服务，无需 -e 安装）
 configs/
   sample.json     示例配置
 scripts/

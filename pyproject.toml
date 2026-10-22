@@ -13,8 +13,8 @@ dependencies = [
     "requests>=2.31.0",
 ]
 
-[project.scripts]
-excel-checker = "excel_checker.main:main"
+# 注意：本项目不依赖 `pip install -e .` 或控制台脚本。
+# 请直接用独立入口启动所有服务：python main.py
 
 [tool.setuptools]
 packages = ["excel_checker"]
