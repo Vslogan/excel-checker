@@ -82,7 +82,7 @@ def _gui(_args: argparse.Namespace) -> int:
         from .qt_app import main as qt_main
     except ImportError as exc:
         raise ExcelCheckerError(
-            f"无法加载 PyQt5 桌面依赖（{exc}）；请执行 python -m pip install -e '.[desktop]'"
+            f"无法加载 PyQt5 桌面依赖（{exc}）；请执行 python -m pip install -r requirements.txt"
         ) from exc
     return qt_main([])
 

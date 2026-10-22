@@ -15,22 +15,28 @@
 
 ## 环境
 
-项目目标版本为 **Python 3.13+**，核心引擎不依赖第三方运行库。当前开发容器提供的是 Python 3.11.2，核心测试和 PyQt5 5.15.11 的离屏界面/剪切板工作流测试均已运行通过；但这里没有 Python 3.13 解释器和完整桌面环境，因此尚未做 Python 3.13 桌面系统的端到端验证。
+项目目标版本为 **Python 3.13+**。核心引擎不依赖第三方运行库；桌面界面依赖 PyQt5。当前开发容器提供 Python 3.11.2，核心测试和 PyQt5 5.15.11 的离屏界面/剪切板工作流测试均已运行通过；此处没有 Python 3.13 解释器和完整桌面环境，因此尚未做 Python 3.13 桌面系统的端到端验证。
+
+无需安装本项目。根目录的 `main.py` 会自动加入 `src/` 到模块路径并启动应用及其服务：
 
 ```bash
 # Python 3.13 环境
-python -m pip install -e '.[desktop]'
-excel-checker gui
+python -m venv .venv
+# Linux / macOS
+source .venv/bin/activate
+# Windows PowerShell: .venv/Scripts/Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
 ```
 
-桌面版依赖 PyQt5，并通过 Qt 自带的剪切板接口读写数据。CLI 的 `watch` 命令另需安装 `system-clipboard` 额外依赖；某些 Linux 桌面还需要系统提供 `xclip`、`xsel` 或 Wayland 剪切板工具。也可一次安装两种可选依赖：`python -m pip install -e '.[desktop,system-clipboard]'`。
+桌面版通过 Qt 自带的剪切板接口读写数据。CLI 的 `watch` 命令另需 `python -m pip install -r requirements-system-clipboard.txt`；某些 Linux 桌面还需要系统提供 `xclip`、`xsel` 或 Wayland 剪切板工具。
 
 ## 桌面界面
 
 ```bash
-excel-checker gui
-# 或直接启动桌面入口
-excel-checker-gui
+python main.py
+# 同一入口也可显式指定桌面模式
+python main.py gui
 ```
 
 默认规则目录是当前工作目录下的 `rules/`，也可在界面顶部切换。左侧可新建、导入 JSON、删除和启停规则；右侧配置表格尺寸、正则条件，以及按顺序排列的动作积木（添加/编辑/删除/上移/下移）；点击“保存规则”后写入 JSON。勾选“监控剪切板”开始监听，已有剪切板内容仅设为基线，不会刚启动就误触发。
@@ -39,23 +45,19 @@ excel-checker-gui
 
 ```bash
 # 校验 JSON 配置、动作参数和正则
-excel-checker validate examples/id_lookup.json
+python main.py validate examples/id_lookup.json
 
 # 离线演示：输入 12345，通知并预览将写入剪切板的表格
-excel-checker run examples/offline_demo.json --text '12345'
+python main.py run examples/offline_demo.json --text '12345'
 
 # 网络动作示例会真实请求配置中的 URL；user_input 在终端读取
-excel-checker run examples/id_lookup.json --text '12345'
+python main.py run examples/id_lookup.json --text '12345'
 
 # 监控一个规则目录；启动时现有剪切板仅作为基线，不会误触发
-excel-checker watch ./rules
+python main.py watch ./rules
 ```
 
-也可以在源码目录直接执行：
-
-```bash
-PYTHONPATH=src python -m excel_checker validate examples/id_lookup.json
-```
+所有命令都由根目录的 `main.py` 引导加载 `src/excel_checker`，不要求设置 `PYTHONPATH` 或安装项目包。
 
 ## JSON 规则格式（version 1）
 
@@ -103,4 +105,4 @@ PYTHONPATH=src python -m excel_checker validate examples/id_lookup.json
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-测试覆盖规则校验与匹配、动作顺序、HTTP 超时/失败中断、热加载和剪切板解析。安装 `.[desktop]` 后还会运行 Qt 表单、规则启停及后台执行/剪切板写入测试；没有可加载的 PyQt5/Qt 运行库时，这 4 项会被跳过。后续可在现有动作注册接口上继续增加文件读写、条件和循环积木。
+测试覆盖规则校验与匹配、动作顺序、HTTP 超时/失败中断、热加载和剪切板解析。安装 `requirements.txt` 中的 PyQt5 后，还会运行 Qt 表单、规则启停及后台执行/剪切板写入测试；没有可加载的 PyQt5/Qt 运行库时，这 4 项会被跳过。后续可在现有动作注册接口上继续增加文件读写、条件和循环积木。

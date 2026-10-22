@@ -14,10 +14,6 @@ dependencies = []
 desktop = ["PyQt5>=5.15.11"]
 system-clipboard = ["pyperclip>=1.9"]
 
-[project.scripts]
-excel-checker = "excel_checker.cli:main"
-excel-checker-gui = "excel_checker.qt_app:main"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 
