@@ -1,0 +1,33 @@
+{
+  "name": "订单信息快速提取并保存",
+  "trigger": {
+    "table_size": [2, 3],
+    "extra_condition": {
+      "position": [0, 0],
+      "regex": "^ORDER-"
+    }
+  },
+  "workflow": [
+    {
+      "action": "extract_cell",
+      "position": [0, 0],
+      "variable": "order_id"
+    },
+    {
+      "action": "extract_cell",
+      "position": [0, 1],
+      "variable": "customer_name"
+    },
+    {
+      "action": "show_message",
+      "title": "订单检测成功",
+      "content": "检测到订单: {{order_id}}, 客户: {{customer_name}}"
+    },
+    {
+      "action": "write_clipboard",
+      "type": "table",
+      "data": "订单号,客户姓名,状态\n{{order_id}},{{customer_name}},已复核"
+    }
+  ],
+  "enabled": true
+}

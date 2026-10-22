@@ -1,0 +1,47 @@
+{
+  "配置名称": "GitHub用户查询与信息导出",
+  "触发该配置的前提": {
+    "表格大小": [1, 1],
+    "额外条件": {
+      "位置": [0, 0],
+      "正则表达式": "^[a-zA-Z0-9_-]+$"
+    }
+  },
+  "触发后的流程": [
+    {
+      "动作": "提取某一格",
+      "操作位置": [0, 0],
+      "暂存到的变量名": "username"
+    },
+    {
+      "动作": "发网络请求",
+      "方法": "GET",
+      "url": "https://api.github.com/users/{{username}}",
+      "header": {
+        "User-Agent": "excel-checker-agent"
+      },
+      "timeout": 10000,
+      "callback": {
+        "user_name": "name",
+        "public_repos": "public_repos"
+      }
+    },
+    {
+      "动作": "用户输入",
+      "提示文本": "请输入备注标签 (例如: 重要客户)",
+      "变量名": "remark",
+      "默认值": "标准开发人员"
+    },
+    {
+      "动作": "弹出提示框",
+      "标题": "查询结果",
+      "内容": "用户 {{username}} 姓名: {{user_name}}，公开仓库数: {{public_repos}}，备注: {{remark}}"
+    },
+    {
+      "动作": "写入剪切板",
+      "type": "table",
+      "data": "{{username}},{{user_name}},{{public_repos}},{{remark}}"
+    }
+  ],
+  "启用状态": true
+}
