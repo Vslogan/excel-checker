@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "name": "ID 查询并复制结果",
+  "enabled": true,
+  "priority": 10,
+  "trigger": {
+    "table_size": {
+      "rows": 1,
+      "columns": 1
+    },
+    "conditions": [
+      {
+        "cell": [0, 0],
+        "regex": "^[0-9]{3,}$"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "action": "extract_cell",
+      "cell": [0, 0],
+      "variable": "id"
+    },
+    {
+      "action": "http_request",
+      "method": "POST",
+      "url": "https://example.com/api/items/{{id}}",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Request-Source": "excel-checker"
+      },
+      "body": {
+        "id": "{{id}}"
+      },
+      "timeout_ms": 10000,
+      "callback": {
+        "newData": "res.data[0]"
+      }
+    },
+    {
+      "action": "user_input",
+      "prompt": "请输入要提取第几个",
+      "variable": "index"
+    },
+    {
+      "action": "notify",
+      "message": "新内容为 {{newData}}；输入序号为 {{index}}"
+    },
+    {
+      "action": "clipboard_write",
+      "type": "table",
+      "data": [
+        ["ID", "结果"],
+        ["{{id}}", "{{newData}}"]
+      ]
+    }
+  ]
+}

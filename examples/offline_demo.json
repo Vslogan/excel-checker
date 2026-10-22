@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "离线演示：提取并复制",
+  "enabled": true,
+  "trigger": {
+    "table_size": {
+      "rows": 1,
+      "columns": 1
+    },
+    "conditions": [
+      {
+        "cell": [0, 0],
+        "regex": "^[0-9]{3,}$"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "action": "extract_cell",
+      "cell": [0, 0],
+      "variable": "id"
+    },
+    {
+      "action": "notify",
+      "message": "识别到 ID：{{id}}"
+    },
+    {
+      "action": "clipboard_write",
+      "type": "table",
+      "data": [
+        ["ID", "状态"],
+        ["{{id}}", "已检查"]
+      ]
+    }
+  ]
+}

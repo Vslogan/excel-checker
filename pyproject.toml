@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "excel-checker"
+version = "0.1.0"
+description = "Configurable spreadsheet clipboard checking assistant"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+desktop = ["PyQt5>=5.15.11"]
+system-clipboard = ["pyperclip>=1.9"]
+
+[project.scripts]
+excel-checker = "excel_checker.cli:main"
+excel-checker-gui = "excel_checker.qt_app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
