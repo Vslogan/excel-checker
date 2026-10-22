@@ -1,2 +1,1 @@
--r requirements.txt
 pyperclip>=1.9
