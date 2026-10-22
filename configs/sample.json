@@ -1,0 +1,17 @@
+{
+  "name": "示例配置",
+  "trigger": {
+    "size": {"rows": 2, "cols": 2},
+    "conditions": [{"cell": [0, 0], "pattern": "[0-9]{3,}"}]
+  },
+  "steps": [
+    {"action": "extract_cell", "cell": [0, 0], "variable": "id"},
+    {"action": "http_request", "method": "POST", "url": "http://example.com/{{id}}",
+     "headers": {"X-Id": "{{id}}"}, "body": {"id": "{{id}}"}, "timeout": 10000,
+     "callback": {"newData": "res.data[0]"}},
+    {"action": "user_input", "prompt": "请输入要提取第几个", "variable": "index"},
+    {"action": "alert", "content": "新内容为{{newData}}，索引: {{index}}"},
+    {"action": "write_clipboard", "type": "table",
+     "data": [["id", "newData", "index"], ["{{id}}", "{{newData}}", "{{index}}"]]}
+  ]
+}

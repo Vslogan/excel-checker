@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "excel-checker"
+version = "0.1.0"
+description = "Excel/剪贴板表格数据检查辅助桌面工具（基于 JSON 规则引擎）"
+readme = "README.md"
+requires-python = ">=3.11"  # 目标运行环境 Python 3.13；代码对 3.11+ 向前兼容
+dependencies = [
+    "PyQt5>=5.15.9",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+excel-checker = "excel_checker.main:main"
+
+[tool.setuptools]
+packages = ["excel_checker"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py313"]
