@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -35,6 +36,7 @@ from src.gui.block_editor import BlockEditorWidget
 from src.gui.clipboard_watcher import ClipboardWatcher
 from src.gui.json_editor_widget import JsonEditorWidget
 from src.gui.qt_delegate import ThreadSafeUIDelegate
+from src.gui.sidebar import SidebarNav
 from src.gui.simulator_widget import SimulatorWidget
 from src.gui.style import APP_STYLESHEET
 from src.gui.worker import WorkflowWorker
@@ -137,31 +139,42 @@ class MainWindow(QMainWindow):
         self.lbl_monitor_status.setStyleSheet("color: #64748b; font-weight: bold; margin-left: 6px;")
         toolbar.addWidget(self.lbl_monitor_status)
 
-        # 2. Main Workspace Splitter
+        # 2. Main Workspace (Splitter: Upper Content + Lower Log Console)
         main_splitter = QSplitter(Qt.Vertical)
 
-        # Tabs container
-        self.tabs = QTabWidget()
+        # Upper Content Area: Horizontal split between Sidebar (Level 1) and Pages
+        workspace_widget = QWidget()
+        workspace_layout = QHBoxLayout(workspace_widget)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
 
-        # Tab 1: Block Editor
+        # Level 1 Menu: Vertical Sidebar Navigation
+        self.sidebar = SidebarNav(self)
+        self.sidebar.page_changed.connect(self._on_sidebar_page_changed)
+        workspace_layout.addWidget(self.sidebar)
+
+        # Central Stacked Pages
+        self.page_stack = QStackedWidget(self)
+
+        # Page 1: Block Editor (Containing Level 2 Secondary Tabs: Trigger & Pipeline)
         self.block_editor = BlockEditorWidget()
         self.block_editor.rule_changed.connect(self._on_rule_modified)
-        self.tabs.addTab(self.block_editor, "低代码积木编辑器 (Visual Blocks)")
+        self.sidebar.add_page("editor", "低代码积木 (Visual)", self.block_editor, self.page_stack, is_default=True)
 
-        # Tab 2: JSON Sync
+        # Page 2: JSON Source Synchronizer
         self.json_editor = JsonEditorWidget()
         self.json_editor.apply_requested.connect(self._on_json_applied)
-        self.tabs.addTab(self.json_editor, "JSON 源码双向同步 (JSON Source)")
+        self.sidebar.add_page("json", "JSON 源码同步", self.json_editor, self.page_stack)
 
-        # Tab 3: Simulator
+        # Page 3: Clipboard Table Simulator
         self.simulator = SimulatorWidget(
             engine=self.engine,
             get_current_rule_fn=self.get_active_rule,
         )
-        self.tabs.addTab(self.simulator, "表格模拟测试器 (Clipboard Simulator)")
+        self.sidebar.add_page("simulator", "表格模拟测试器", self.simulator, self.page_stack)
 
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-        main_splitter.addWidget(self.tabs)
+        workspace_layout.addWidget(self.page_stack, 1)
+        main_splitter.addWidget(workspace_widget)
 
         # 3. Bottom Log Console Panel
         bottom_box = QWidget()
@@ -188,7 +201,7 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(bottom_box)
         main_splitter.setStretchFactor(0, 4)
         main_splitter.setStretchFactor(1, 1)
-        main_splitter.setSizes([700, 160])
+        main_splitter.setSizes([720, 160])
 
         self.setCentralWidget(main_splitter)
 
@@ -250,10 +263,12 @@ class MainWindow(QMainWindow):
         rule = self.get_active_rule()
         self.engine.active_rule = rule
 
-    def _on_tab_changed(self, idx: int):
+    def _on_sidebar_page_changed(self, page_id: str, page_index: int):
         rule = self.get_active_rule()
-        if idx == 1:  # JSON sync tab
+        if page_id == "json":
             self.json_editor.set_rule(rule)
+        elif page_id == "simulator":
+            self.simulator._update_table_info()
 
     def _on_json_applied(self, rule: RuleConfig):
         """Called when user applies JSON code back to visual blocks."""

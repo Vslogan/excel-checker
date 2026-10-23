@@ -1,4 +1,8 @@
-"""Visual Block Editor widget for editing trigger rules and action pipelines."""
+"""Rule configuration editor split into secondary tabs (Level 2 Menu).
+
+Tab 1: Trigger Conditions (Trigger Predicates & Extra Regex)
+Tab 2: Workflow Pipeline (Full-height Action Block Cards area)
+"""
 from __future__ import annotations
 
 import re
@@ -16,6 +20,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -33,92 +38,89 @@ from src.gui.action_cards import (
 )
 
 
-class BlockEditorWidget(QWidget):
-    """Low-code style visual block editor for configuring rules."""
+class TriggerConfigTab(QWidget):
+    """Secondary Tab 1: Trigger Conditions configuration."""
 
-    rule_changed = pyqtSignal()
+    changed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.cards: List[BaseActionCard] = []
-        self._block_signals: bool = False
         self.setup_ui()
 
     def setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(12)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
-        # 1. Trigger Predicates GroupBox
-        trigger_group = QGroupBox("触发前提条件配置 (Trigger Conditions)")
-        trigger_layout = QVBoxLayout(trigger_group)
-        trigger_layout.setSpacing(8)
+        # Basic Info Card
+        meta_group = QGroupBox("规则基础属性")
+        meta_layout = QFormLayout(meta_group)
+        meta_layout.setSpacing(10)
 
-        # Rule Name & Enabled
-        meta_layout = QHBoxLayout()
-        meta_layout.addWidget(QLabel("<b>规则名称:</b>"))
         self.edit_name = QLineEdit("新建表格检查规则")
-        self.edit_name.textChanged.connect(self._on_changed)
-        meta_layout.addWidget(self.edit_name, 3)
+        self.edit_name.setPlaceholderText("请输入规则名称")
+        self.edit_name.textChanged.connect(self.changed.emit)
+        meta_layout.addRow("规则名称:", self.edit_name)
 
-        self.chk_enabled = QCheckBox("启用该规则")
+        self.chk_enabled = QCheckBox("启用该规则 (取消勾选将忽略该规则)")
         self.chk_enabled.setChecked(True)
-        self.chk_enabled.toggled.connect(self._on_changed)
-        meta_layout.addWidget(self.chk_enabled, 1)
-        trigger_layout.addLayout(meta_layout)
+        self.chk_enabled.toggled.connect(self.changed.emit)
+        meta_layout.addRow("启用状态:", self.chk_enabled)
+        layout.addWidget(meta_group)
 
-        # Dimensions
-        dim_layout = QHBoxLayout()
-        dim_layout.addWidget(QLabel("<b>复制表格大小 (必须):</b>"))
+        # Table Dimension Card
+        dim_group = QGroupBox("复制表格大小要求 (必须一致才触发)")
+        dim_layout = QVBoxLayout(dim_group)
+        dim_layout.setSpacing(10)
 
+        spin_box = QHBoxLayout()
         self.spin_rows = QSpinBox()
         self.spin_rows.setRange(1, 9999)
         self.spin_rows.setValue(1)
         self.spin_rows.setPrefix("行数: ")
-        self.spin_rows.valueChanged.connect(self._on_changed)
-        dim_layout.addWidget(self.spin_rows)
+        self.spin_rows.valueChanged.connect(self.changed.emit)
+        spin_box.addWidget(self.spin_rows)
 
         self.spin_cols = QSpinBox()
         self.spin_cols.setRange(1, 9999)
         self.spin_cols.setValue(1)
         self.spin_cols.setPrefix("列数: ")
-        self.spin_cols.valueChanged.connect(self._on_changed)
-        dim_layout.addWidget(self.spin_cols)
+        self.spin_cols.valueChanged.connect(self.changed.emit)
+        spin_box.addWidget(self.spin_cols)
 
-        dim_tip = QLabel("<font color='#0284c7'>提示：普通纯文本复制将统一兼容视为 1x1 表格</font>")
-        dim_layout.addWidget(dim_tip)
-        dim_layout.addStretch()
-        trigger_layout.addLayout(dim_layout)
+        dim_tip = QLabel("<font color='#0284c7'>兼容说明：部分软件复制 1x1 表格时为纯文本，本工具将普通文本统一兼容视为 1x1 表格。</font>")
+        spin_box.addWidget(dim_tip)
+        spin_box.addStretch()
+        dim_layout.addLayout(spin_box)
+        layout.addWidget(dim_group)
 
-        # Extra condition
-        extra_group = QGroupBox("额外条件 (可选)")
+        # Extra Regex Condition Card
+        extra_group = QGroupBox("额外单元格内容条件 (可选)")
         extra_layout = QVBoxLayout(extra_group)
-        extra_layout.setContentsMargins(10, 8, 10, 8)
+        extra_layout.setSpacing(10)
 
-        cond_header_layout = QHBoxLayout()
-        self.chk_extra = QCheckBox("启用额外单元格格式匹配")
+        self.chk_extra = QCheckBox("启用指定单元格正则表达式格式过滤")
         self.chk_extra.setChecked(False)
         self.chk_extra.toggled.connect(self._on_extra_toggled)
-        cond_header_layout.addWidget(self.chk_extra)
-        extra_layout.addLayout(cond_header_layout)
+        extra_layout.addWidget(self.chk_extra)
 
-        self.extra_fields_widget = QWidget()
-        extra_form = QFormLayout(self.extra_fields_widget)
+        self.extra_container = QWidget()
+        extra_form = QFormLayout(self.extra_container)
         extra_form.setContentsMargins(0, 4, 0, 0)
-        extra_form.setSpacing(6)
+        extra_form.setSpacing(10)
 
         pos_box = QHBoxLayout()
         self.spin_cond_row = QSpinBox()
         self.spin_cond_row.setRange(0, 9999)
         self.spin_cond_row.setPrefix("第 ")
         self.spin_cond_row.setSuffix(" 行")
-        self.spin_cond_row.valueChanged.connect(self._on_changed)
+        self.spin_cond_row.valueChanged.connect(self.changed.emit)
 
         self.spin_cond_col = QSpinBox()
         self.spin_cond_col.setRange(0, 9999)
         self.spin_cond_col.setPrefix("第 ")
         self.spin_cond_col.setSuffix(" 列 (0-based)")
-        self.spin_cond_col.valueChanged.connect(self._on_changed)
+        self.spin_cond_col.valueChanged.connect(self.changed.emit)
 
         pos_box.addWidget(self.spin_cond_row)
         pos_box.addWidget(self.spin_cond_col)
@@ -126,81 +128,32 @@ class BlockEditorWidget(QWidget):
         extra_form.addRow("目标单元格位置:", pos_box)
 
         # Regex pattern & live tester
-        regex_layout = QHBoxLayout()
+        regex_box = QHBoxLayout()
         self.edit_regex = QLineEdit("[0-9]{3,}")
-        self.edit_regex.setPlaceholderText("正则表达式，例如: [0-9]{3,}")
+        self.edit_regex.setPlaceholderText("输入正则表达式，例如: [0-9]{3,}")
         self.edit_regex.textChanged.connect(self._test_live_regex)
-        self.edit_regex.textChanged.connect(self._on_changed)
-        regex_layout.addWidget(self.edit_regex, 3)
+        self.edit_regex.textChanged.connect(self.changed.emit)
+        regex_box.addWidget(self.edit_regex, 3)
 
         self.edit_test_input = QLineEdit()
-        self.edit_test_input.setPlaceholderText("实时测试输入...")
+        self.edit_test_input.setPlaceholderText("实时测试输入字符...")
         self.edit_test_input.textChanged.connect(self._test_live_regex)
-        regex_layout.addWidget(self.edit_test_input, 2)
+        regex_box.addWidget(self.edit_test_input, 2)
 
         self.lbl_regex_result = QLabel("待测试")
-        self.lbl_regex_result.setStyleSheet("color: #64748b; font-weight: bold;")
-        regex_layout.addWidget(self.lbl_regex_result)
+        self.lbl_regex_result.setStyleSheet("color: #64748b; font-weight: bold; min-width: 70px;")
+        regex_box.addWidget(self.lbl_regex_result)
 
-        extra_form.addRow("正则表达式规则:", regex_layout)
-        extra_layout.addWidget(self.extra_fields_widget)
-        self.extra_fields_widget.setVisible(False)
+        extra_form.addRow("正则表达式规则:", regex_box)
+        extra_layout.addWidget(self.extra_container)
+        self.extra_container.setVisible(False)
+        layout.addWidget(extra_group)
 
-        trigger_layout.addWidget(extra_group)
-        main_layout.addWidget(trigger_group, 0)
-
-        # 2. Workflow Action Blocks Section
-        workflow_group = QGroupBox("触发后的执行流程 (Workflow Action Pipeline)")
-        wf_layout = QVBoxLayout(workflow_group)
-        wf_layout.setSpacing(8)
-
-        # Action Toolbar
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.addWidget(QLabel("<b>添加动作积木:</b>"))
-
-        btn_add_extract = QPushButton("+ 提取单元格")
-        btn_add_extract.clicked.connect(lambda: self.add_card_by_type("extract_cell"))
-        toolbar_layout.addWidget(btn_add_extract)
-
-        btn_add_http = QPushButton("+ 发网络请求")
-        btn_add_http.clicked.connect(lambda: self.add_card_by_type("http_request"))
-        toolbar_layout.addWidget(btn_add_http)
-
-        btn_add_input = QPushButton("+ 用户输入")
-        btn_add_input.clicked.connect(lambda: self.add_card_by_type("user_input"))
-        toolbar_layout.addWidget(btn_add_input)
-
-        btn_add_msg = QPushButton("+ 弹出提示框")
-        btn_add_msg.clicked.connect(lambda: self.add_card_by_type("show_message"))
-        toolbar_layout.addWidget(btn_add_msg)
-
-        btn_add_clip = QPushButton("+ 写入剪切板")
-        btn_add_clip.clicked.connect(lambda: self.add_card_by_type("write_clipboard"))
-        toolbar_layout.addWidget(btn_add_clip)
-
-        btn_add_file = QPushButton("+ 文件读写")
-        btn_add_file.clicked.connect(lambda: self.add_card_by_type("file_ops"))
-        toolbar_layout.addWidget(btn_add_file)
-
-        toolbar_layout.addStretch()
-        wf_layout.addLayout(toolbar_layout)
-
-        # Scroll area for cards
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.cards_container = QWidget()
-        self.cards_layout = QVBoxLayout(self.cards_container)
-        self.cards_layout.setContentsMargins(4, 4, 4, 4)
-        self.cards_layout.setSpacing(10)
-        self.cards_layout.addStretch()
-        self.scroll_area.setWidget(self.cards_container)
-        wf_layout.addWidget(self.scroll_area)
-
-        main_layout.addWidget(workflow_group, 1)
+        layout.addStretch()
 
     def _on_extra_toggled(self, checked: bool):
-        self.extra_fields_widget.setVisible(checked)
-        self._on_changed()
+        self.extra_container.setVisible(checked)
+        self.changed.emit()
 
     def _test_live_regex(self):
         pattern = self.edit_regex.text().strip()
@@ -221,13 +174,86 @@ class BlockEditorWidget(QWidget):
             else:
                 self.lbl_regex_result.setText("❌ 不匹配")
                 self.lbl_regex_result.setStyleSheet("color: #ef4444; font-weight: bold;")
-        except re.error as e:
+        except re.error:
             self.lbl_regex_result.setText("⚠️ 正则错误")
             self.lbl_regex_result.setStyleSheet("color: #dc2626;")
 
-    def _on_changed(self):
-        if not self._block_signals:
-            self.rule_changed.emit()
+
+class WorkflowPipelineTab(QWidget):
+    """Secondary Tab 2: Workflow Action Pipeline with full-height scroll area."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.cards: List[BaseActionCard] = []
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # Action Toolbar Bar
+        toolbar_frame = QFrame()
+        toolbar_frame.setStyleSheet("background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px;")
+        bar_layout = QHBoxLayout(toolbar_frame)
+        bar_layout.setContentsMargins(8, 6, 8, 6)
+        bar_layout.setSpacing(8)
+
+        bar_layout.addWidget(QLabel("<b>添加动作积木:</b>"))
+
+        btn_add_extract = QPushButton("+ 提取单元格")
+        btn_add_extract.clicked.connect(lambda: self.add_card_by_type("extract_cell"))
+        bar_layout.addWidget(btn_add_extract)
+
+        btn_add_http = QPushButton("+ 发网络请求")
+        btn_add_http.clicked.connect(lambda: self.add_card_by_type("http_request"))
+        bar_layout.addWidget(btn_add_http)
+
+        btn_add_input = QPushButton("+ 用户输入")
+        btn_add_input.clicked.connect(lambda: self.add_card_by_type("user_input"))
+        bar_layout.addWidget(btn_add_input)
+
+        btn_add_msg = QPushButton("+ 弹出提示框")
+        btn_add_msg.clicked.connect(lambda: self.add_card_by_type("show_message"))
+        bar_layout.addWidget(btn_add_msg)
+
+        btn_add_clip = QPushButton("+ 写入剪切板")
+        btn_add_clip.clicked.connect(lambda: self.add_card_by_type("write_clipboard"))
+        bar_layout.addWidget(btn_add_clip)
+
+        btn_add_file = QPushButton("+ 文件读写")
+        btn_add_file.clicked.connect(lambda: self.add_card_by_type("file_ops"))
+        bar_layout.addWidget(btn_add_file)
+
+        bar_layout.addStretch()
+
+        self.lbl_step_count = QLabel("当前 0 个步骤")
+        self.lbl_step_count.setStyleSheet("color: #0284c7; font-weight: bold; background: #e0f2fe; padding: 4px 8px; border-radius: 4px;")
+        bar_layout.addWidget(self.lbl_step_count)
+
+        layout.addWidget(toolbar_frame)
+
+        # Full-height Scroll Area for cards
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid #e2e8f0;
+                background-color: #f8fafc;
+                border-radius: 6px;
+            }
+        """)
+
+        self.cards_container = QWidget()
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(8, 8, 8, 8)
+        self.cards_layout.setSpacing(12)
+        self.cards_layout.addStretch()
+
+        self.scroll_area.setWidget(self.cards_container)
+        layout.addWidget(self.scroll_area)
 
     def add_card_by_type(self, action_type: str, config: Optional[Dict[str, Any]] = None):
         cfg = dict(config or {})
@@ -236,17 +262,16 @@ class BlockEditorWidget(QWidget):
         self.add_card(card)
 
     def add_card(self, card: BaseActionCard):
-        card.changed.connect(self._on_changed)
+        card.changed.connect(self.changed.emit)
         card.delete_requested.connect(self.remove_card)
         card.move_up_requested.connect(self.move_card_up)
         card.move_down_requested.connect(self.move_card_down)
         card.clone_requested.connect(self.clone_card)
 
         self.cards.append(card)
-        # Insert before the trailing stretch
         self.cards_layout.insertWidget(len(self.cards) - 1, card)
         self._renumber_steps()
-        self._on_changed()
+        self.changed.emit()
 
     def remove_card(self, card: BaseActionCard):
         if card in self.cards:
@@ -254,7 +279,7 @@ class BlockEditorWidget(QWidget):
             self.cards_layout.removeWidget(card)
             card.deleteLater()
             self._renumber_steps()
-            self._on_changed()
+            self.changed.emit()
 
     def move_card_up(self, card: BaseActionCard):
         idx = self.cards.index(card)
@@ -263,7 +288,7 @@ class BlockEditorWidget(QWidget):
             self.cards_layout.removeWidget(card)
             self.cards_layout.insertWidget(idx - 1, card)
             self._renumber_steps()
-            self._on_changed()
+            self.changed.emit()
 
     def move_card_down(self, card: BaseActionCard):
         idx = self.cards.index(card)
@@ -272,13 +297,13 @@ class BlockEditorWidget(QWidget):
             self.cards_layout.removeWidget(card)
             self.cards_layout.insertWidget(idx + 1, card)
             self._renumber_steps()
-            self._on_changed()
+            self.changed.emit()
 
     def clone_card(self, card: BaseActionCard):
         cfg = card.to_config()
         idx = self.cards.index(card)
         new_card = create_card_for_action(cfg)
-        new_card.changed.connect(self._on_changed)
+        new_card.changed.connect(self.changed.emit)
         new_card.delete_requested.connect(self.remove_card)
         new_card.move_up_requested.connect(self.move_card_up)
         new_card.move_down_requested.connect(self.move_card_down)
@@ -287,71 +312,186 @@ class BlockEditorWidget(QWidget):
         self.cards.insert(idx + 1, new_card)
         self.cards_layout.insertWidget(idx + 1, new_card)
         self._renumber_steps()
-        self._on_changed()
+        self.changed.emit()
 
     def _renumber_steps(self):
         for i, card in enumerate(self.cards):
             card.set_step_number(i + 1)
             card.btn_up.setEnabled(i > 0)
             card.btn_down.setEnabled(i < len(self.cards) - 1)
+        self.lbl_step_count.setText(f"当前共 {len(self.cards)} 个步骤")
 
     def clear_cards(self):
         for card in list(self.cards):
             self.cards_layout.removeWidget(card)
             card.deleteLater()
         self.cards.clear()
+        self._renumber_steps()
+
+
+class BlockEditorWidget(QWidget):
+    """Main Rule Editor Widget containing secondary tabs (Level 2 Menu).
+
+    Tab 1: 触发前提配置 (Trigger Conditions)
+    Tab 2: 触发后执行流程 (Workflow Pipeline)
+    """
+
+    rule_changed = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._block_signals = False
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Secondary Level 2 Tab Widget
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabBar::tab {
+                background: #f1f5f9;
+                border: 1px solid #cbd5e1;
+                border-bottom: none;
+                padding: 10px 22px;
+                font-weight: 600;
+                color: #475569;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0284c7;
+                border-top: 3px solid #0284c7;
+            }
+            QTabWidget::pane {
+                border: 1px solid #e2e8f0;
+                background: #ffffff;
+                border-radius: 4px;
+            }
+        """)
+
+        # Tab 1: Trigger Conditions
+        self.trigger_tab = TriggerConfigTab()
+        self.trigger_tab.changed.connect(self._on_sub_changed)
+        self.tabs.addTab(self.trigger_tab, "触发前提配置 (Trigger Conditions)")
+
+        # Tab 2: Workflow Pipeline (Full-height Action Blocks)
+        self.pipeline_tab = WorkflowPipelineTab()
+        self.pipeline_tab.changed.connect(self._on_sub_changed)
+        self.tabs.addTab(self.pipeline_tab, "触发后执行流程 (Workflow Pipeline)")
+
+        layout.addWidget(self.tabs)
+
+    # Expose cards list for compatibility with existing tests
+    @property
+    def cards(self) -> List[BaseActionCard]:
+        return self.pipeline_tab.cards
+
+    @property
+    def edit_name(self) -> QLineEdit:
+        return self.trigger_tab.edit_name
+
+    @property
+    def chk_enabled(self) -> QCheckBox:
+        return self.trigger_tab.chk_enabled
+
+    @property
+    def spin_rows(self) -> QSpinBox:
+        return self.trigger_tab.spin_rows
+
+    @property
+    def spin_cols(self) -> QSpinBox:
+        return self.trigger_tab.spin_cols
+
+    @property
+    def chk_extra(self) -> QCheckBox:
+        return self.trigger_tab.chk_extra
+
+    @property
+    def spin_cond_row(self) -> QSpinBox:
+        return self.trigger_tab.spin_cond_row
+
+    @property
+    def spin_cond_col(self) -> QSpinBox:
+        return self.trigger_tab.spin_cond_col
+
+    @property
+    def edit_regex(self) -> QLineEdit:
+        return self.trigger_tab.edit_regex
+
+    @property
+    def scroll_area(self) -> QScrollArea:
+        return self.pipeline_tab.scroll_area
+
+    @property
+    def cards_container(self) -> QWidget:
+        return self.pipeline_tab.cards_container
+
+    def move_card_up(self, card: BaseActionCard):
+        self.pipeline_tab.move_card_up(card)
+
+    def move_card_down(self, card: BaseActionCard):
+        self.pipeline_tab.move_card_down(card)
+
+    def clone_card(self, card: BaseActionCard):
+        self.pipeline_tab.clone_card(card)
+
+    def remove_card(self, card: BaseActionCard):
+        self.pipeline_tab.remove_card(card)
+
+    def _on_sub_changed(self):
+        if not self._block_signals:
+            self.rule_changed.emit()
 
     def load_rule(self, rule: RuleConfig):
-        """Populate the editor from a RuleConfig model."""
+        """Populate both secondary tabs from a RuleConfig model."""
         self._block_signals = True
         try:
-            self.edit_name.setText(rule.name)
-            self.chk_enabled.setChecked(rule.enabled)
-            self.spin_rows.setValue(rule.table_size[0])
-            self.spin_cols.setValue(rule.table_size[1])
+            # Load Trigger Tab
+            self.trigger_tab.edit_name.setText(rule.name)
+            self.trigger_tab.chk_enabled.setChecked(rule.enabled)
+            self.trigger_tab.spin_rows.setValue(rule.table_size[0])
+            self.trigger_tab.spin_cols.setValue(rule.table_size[1])
 
             if rule.extra_condition and rule.extra_condition.regex:
-                self.chk_extra.setChecked(True)
-                self.extra_fields_widget.setVisible(True)
-                self.spin_cond_row.setValue(rule.extra_condition.row)
-                self.spin_cond_col.setValue(rule.extra_condition.col)
-                self.edit_regex.setText(rule.extra_condition.regex)
+                self.trigger_tab.chk_extra.setChecked(True)
+                self.trigger_tab.extra_container.setVisible(True)
+                self.trigger_tab.spin_cond_row.setValue(rule.extra_condition.row)
+                self.trigger_tab.spin_cond_col.setValue(rule.extra_condition.col)
+                self.trigger_tab.edit_regex.setText(rule.extra_condition.regex)
             else:
-                self.chk_extra.setChecked(False)
-                self.extra_fields_widget.setVisible(False)
+                self.trigger_tab.chk_extra.setChecked(False)
+                self.trigger_tab.extra_container.setVisible(False)
 
-            self.clear_cards()
+            # Load Pipeline Tab
+            self.pipeline_tab.clear_cards()
             for act_cfg in rule.workflow:
                 card = create_card_for_action(act_cfg)
-                card.changed.connect(self._on_changed)
-                card.delete_requested.connect(self.remove_card)
-                card.move_up_requested.connect(self.move_card_up)
-                card.move_down_requested.connect(self.move_card_down)
-                card.clone_requested.connect(self.clone_card)
+                self.pipeline_tab.add_card(card)
 
-                self.cards.append(card)
-                self.cards_layout.insertWidget(len(self.cards) - 1, card)
-
-            self._renumber_steps()
         finally:
             self._block_signals = False
 
     def to_rule(self) -> RuleConfig:
         """Construct a RuleConfig model from the current editor state."""
         extra_cond = None
-        if self.chk_extra.isChecked():
+        if self.trigger_tab.chk_extra.isChecked():
             extra_cond = ExtraCondition(
-                row=self.spin_cond_row.value(),
-                col=self.spin_cond_col.value(),
-                regex=self.edit_regex.text().strip(),
+                row=self.trigger_tab.spin_cond_row.value(),
+                col=self.trigger_tab.spin_cond_col.value(),
+                regex=self.trigger_tab.edit_regex.text().strip(),
             )
 
-        workflow = [card.to_config() for card in self.cards]
+        workflow = [card.to_config() for card in self.pipeline_tab.cards]
 
         return RuleConfig(
-            name=self.edit_name.text().strip() or "未命名规则",
-            table_size=(self.spin_rows.value(), self.spin_cols.value()),
+            name=self.trigger_tab.edit_name.text().strip() or "未命名规则",
+            table_size=(self.trigger_tab.spin_rows.value(), self.trigger_tab.spin_cols.value()),
             extra_condition=extra_cond,
             workflow=workflow,
-            enabled=self.chk_enabled.isChecked(),
+            enabled=self.trigger_tab.chk_enabled.isChecked(),
         )
