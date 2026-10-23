@@ -169,13 +169,13 @@ class TriggerConfigTab(QWidget):
                 self.lbl_regex_result.setText("语法正确")
                 self.lbl_regex_result.setStyleSheet("color: #0284c7;")
             elif compiled.search(sample):
-                self.lbl_regex_result.setText("✅ 匹配成功")
+                self.lbl_regex_result.setText("匹配成功")
                 self.lbl_regex_result.setStyleSheet("color: #16a34a; font-weight: bold;")
             else:
-                self.lbl_regex_result.setText("❌ 不匹配")
+                self.lbl_regex_result.setText("不匹配")
                 self.lbl_regex_result.setStyleSheet("color: #ef4444; font-weight: bold;")
         except re.error:
-            self.lbl_regex_result.setText("⚠️ 正则错误")
+            self.lbl_regex_result.setText("正则错误")
             self.lbl_regex_result.setStyleSheet("color: #dc2626;")
 
 
@@ -218,6 +218,10 @@ class WorkflowPipelineTab(QWidget):
         btn_add_msg = QPushButton("+ 弹出提示框")
         btn_add_msg.clicked.connect(lambda: self.add_card_by_type("show_message"))
         bar_layout.addWidget(btn_add_msg)
+
+        btn_add_toast = QPushButton("+ 弹出冒泡窗")
+        btn_add_toast.clicked.connect(lambda: self.add_card_by_type("toast"))
+        bar_layout.addWidget(btn_add_toast)
 
         btn_add_clip = QPushButton("+ 写入剪切板")
         btn_add_clip.clicked.connect(lambda: self.add_card_by_type("write_clipboard"))

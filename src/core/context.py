@@ -19,6 +19,16 @@ class UIDelegate(Protocol):
     def show_message(self, title: str, message: str) -> None:
         ...
 
+    def show_toast(
+        self,
+        content: str,
+        duration_ms: int = 2000,
+        blocking: bool = False,
+        screen: str = "cursor",
+        position: str = "bottom_center",
+    ) -> None:
+        ...
+
     def set_clipboard(self, content: str) -> None:
         ...
 
@@ -35,6 +45,7 @@ class HeadlessUIDelegate:
     def __init__(self, predefined_inputs: Optional[Dict[str, str]] = None):
         self.predefined_inputs = predefined_inputs or {}
         self.messages: List[Dict[str, str]] = []
+        self.toasts: List[Dict[str, Any]] = []
         self.clipboard_data: str = ""
         self.logs: List[str] = []
 
@@ -46,6 +57,23 @@ class HeadlessUIDelegate:
     def show_message(self, title: str, message: str) -> None:
         self.messages.append({"title": title, "message": message})
         self.log(f"[UI Message] [{title}] {message}")
+
+    def show_toast(
+        self,
+        content: str,
+        duration_ms: int = 2000,
+        blocking: bool = False,
+        screen: str = "cursor",
+        position: str = "bottom_center",
+    ) -> None:
+        self.toasts.append({
+            "content": content,
+            "duration_ms": duration_ms,
+            "blocking": blocking,
+            "screen": screen,
+            "position": position,
+        })
+        self.log(f"[UI Toast] [{position} on {screen}] {content} (duration={duration_ms}ms, blocking={blocking})")
 
     def set_clipboard(self, content: str) -> None:
         self.clipboard_data = content

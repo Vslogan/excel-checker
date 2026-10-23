@@ -147,3 +147,64 @@ def test_clipboard_watcher_loop_prevention(qapp):
 
     # Must be ignored!
     assert len(captured) == 0
+
+
+def test_delegate_show_toast_blocking_and_nonblocking(qapp):
+    """Verify ThreadSafeUIDelegate emits toast_requested and handles blocking/non-blocking."""
+    from src.gui.qt_delegate import ThreadSafeUIDelegate
+
+    delegate = ThreadSafeUIDelegate()
+    toast_log = []
+
+    def mock_toast_handler(content, duration_ms, blocking, screen, position, event):
+        toast_log.append({
+            "content": content,
+            "duration": duration_ms,
+            "blocking": blocking,
+            "screen": screen,
+            "position": position
+        })
+        if event:
+            event.set()
+
+    delegate.toast_requested.disconnect()
+    delegate.toast_requested.connect(mock_toast_handler)
+
+    # Non-blocking call from background thread
+    def call_non_blocking():
+        delegate.show_toast("后台非阻塞冒泡", duration_ms=1500, blocking=False, screen="cursor", position="center")
+
+    t1 = threading.Thread(target=call_non_blocking)
+    t1.start()
+    t1.join(timeout=1.0)
+
+    timeout = time.time() + 1.0
+    while not toast_log and time.time() < timeout:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    assert len(toast_log) == 1
+    assert toast_log[0]["blocking"] is False
+    assert toast_log[0]["content"] == "后台非阻塞冒泡"
+
+    # Blocking call from background thread
+    blocking_done = []
+
+    def call_blocking():
+        delegate.show_toast("后台阻塞冒泡", duration_ms=1000, blocking=True, screen="all", position="top_center")
+        blocking_done.append(True)
+
+    t2 = threading.Thread(target=call_blocking)
+    t2.start()
+
+    timeout = time.time() + 1.0
+    while not blocking_done and time.time() < timeout:
+        qapp.processEvents()
+        time.sleep(0.01)
+    t2.join(timeout=1.0)
+
+    assert len(toast_log) == 2
+    assert toast_log[1]["blocking"] is True
+    assert toast_log[1]["content"] == "后台阻塞冒泡"
+    assert len(blocking_done) == 1
+

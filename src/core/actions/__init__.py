@@ -5,6 +5,7 @@ from src.core.actions.extract_cell import ExtractCellAction
 from src.core.actions.file_ops import FileOpsAction
 from src.core.actions.http_request import HttpRequestAction
 from src.core.actions.show_message import ShowMessageAction
+from src.core.actions.toast import ToastAction
 from src.core.actions.user_input import UserInputAction
 from src.core.actions.write_clipboard import WriteClipboardAction
 
@@ -30,6 +31,11 @@ ActionRegistry.register(
     aliases=["弹出提示框", "提示框", "show_alert", "alert", "message"],
 )
 ActionRegistry.register(
+    "toast",
+    ToastAction,
+    aliases=["弹出冒泡窗", "冒泡窗", "toast", "notification", "bubble"],
+)
+ActionRegistry.register(
     "write_clipboard",
     WriteClipboardAction,
     aliases=["写入剪切板", "剪贴板", "clipboard", "copy"],
@@ -53,6 +59,7 @@ __all__ = [
     "HttpRequestAction",
     "UserInputAction",
     "ShowMessageAction",
+    "ToastAction",
     "WriteClipboardAction",
     "FileOpsAction",
     "ConditionAction",

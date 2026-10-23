@@ -118,6 +118,47 @@ def test_write_clipboard_table():
     assert delegate.get_clipboard() == expected_tsv
 
 
+def test_toast_action_normal():
+    from src.core.actions.toast import ToastAction
+    ctx = ExecutionContext()
+    ctx.set_var("item_name", "iPhone 15")
+    delegate = HeadlessUIDelegate()
+
+    act = ToastAction({
+        "content": "已成功处理: {{item_name}}",
+        "duration": "2500 ms",
+        "blocking": True,
+        "screen": "all",
+        "position": "top_center",
+    })
+    res = act.execute(ctx, delegate)
+    assert res.success
+    assert res.output == "已成功处理: iPhone 15"
+    assert len(delegate.toasts) == 1
+    t = delegate.toasts[0]
+    assert t["content"] == "已成功处理: iPhone 15"
+    assert t["duration_ms"] == 2500
+    assert t["blocking"] is True
+    assert t["screen"] == "all"
+    assert t["position"] == "top_center"
+
+
+def test_toast_action_empty_content_skips():
+    from src.core.actions.toast import ToastAction
+    ctx = ExecutionContext()
+    delegate = HeadlessUIDelegate()
+
+    # Empty content should skip showing popup
+    act = ToastAction({
+        "content": "   ",
+        "duration": 2000,
+    })
+    res = act.execute(ctx, delegate)
+    assert res.success
+    assert isinstance(res.output, dict) and res.output.get("skipped") is True
+    assert len(delegate.toasts) == 0
+
+
 def test_file_ops_action(tmp_path):
     fpath = str(tmp_path / "test.txt")
     ctx = ExecutionContext()

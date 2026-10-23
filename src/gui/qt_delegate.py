@@ -19,6 +19,7 @@ class ThreadSafeUIDelegate(QObject):
     log_requested = pyqtSignal(str)
     input_requested = pyqtSignal(str, str, object, object)  # prompt, default, event, result_box
     message_requested = pyqtSignal(str, str, object)       # title, message, event
+    toast_requested = pyqtSignal(str, int, bool, str, str, object)  # content, duration, blocking, screen, pos, event
     clipboard_write_requested = pyqtSignal(str, object)    # content, event
 
     def __init__(self, parent_widget: Optional[QWidget] = None):
@@ -29,6 +30,7 @@ class ThreadSafeUIDelegate(QObject):
         # Connect internal signals to GUI thread slots
         self.input_requested.connect(self._handle_input_request)
         self.message_requested.connect(self._handle_message_request)
+        self.toast_requested.connect(self._handle_toast_request)
         self.clipboard_write_requested.connect(self._handle_clipboard_write_request)
         self.log_requested.connect(self._handle_log_request)
 
@@ -77,6 +79,47 @@ class ThreadSafeUIDelegate(QObject):
         event = threading.Event()
         self.message_requested.emit(title or "提示", message, event)
         event.wait()
+
+    def show_toast(
+        self,
+        content: str,
+        duration_ms: int = 2000,
+        blocking: bool = False,
+        screen: str = "cursor",
+        position: str = "bottom_center",
+    ) -> None:
+        """Display a floating toast notification. Thread-safe."""
+        if self._is_gui_thread():
+            if not self._is_offscreen():
+                from src.gui.toast_window import ToastManager
+                from PyQt5.QtCore import QEventLoop
+
+                if blocking:
+                    loop = QEventLoop()
+                    ToastManager.show(
+                        content=content,
+                        duration_ms=duration_ms,
+                        blocking=True,
+                        screen_mode=screen,
+                        position_mode=position,
+                        on_finished_cb=loop.quit,
+                    )
+                    loop.exec_()
+                else:
+                    ToastManager.show(
+                        content=content,
+                        duration_ms=duration_ms,
+                        blocking=False,
+                        screen_mode=screen,
+                        position_mode=position,
+                    )
+            return
+
+        # Called from worker thread
+        event = threading.Event()
+        self.toast_requested.emit(content, duration_ms, blocking, screen, position, event)
+        if blocking:
+            event.wait()
 
     def set_clipboard(self, content: str) -> None:
         """Write content to clipboard. Thread-safe."""
@@ -128,6 +171,42 @@ class ThreadSafeUIDelegate(QObject):
             if not self._is_offscreen():
                 QMessageBox.information(self.parent_widget, title, message)
         finally:
+            event.set()
+
+    @pyqtSlot(str, int, bool, str, str, object)
+    def _handle_toast_request(
+        self,
+        content: str,
+        duration_ms: int,
+        blocking: bool,
+        screen: str,
+        position: str,
+        event: threading.Event,
+    ):
+        try:
+            if not self._is_offscreen():
+                from src.gui.toast_window import ToastManager
+                if blocking:
+                    ToastManager.show(
+                        content=content,
+                        duration_ms=duration_ms,
+                        blocking=True,
+                        screen_mode=screen,
+                        position_mode=position,
+                        on_finished_cb=event.set,
+                    )
+                else:
+                    ToastManager.show(
+                        content=content,
+                        duration_ms=duration_ms,
+                        blocking=False,
+                        screen_mode=screen,
+                        position_mode=position,
+                    )
+                    event.set()
+            else:
+                event.set()
+        except Exception:
             event.set()
 
     @pyqtSlot(str, object)

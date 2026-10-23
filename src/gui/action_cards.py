@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QByteArray, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -15,11 +17,59 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from src.core.actions.extract_cell import parse_cell_position
+
+
+def create_svg_tip_button(tip_text: str = "") -> QToolButton:
+    """Create a crisp circular exclamation mark button using SVG with hover tooltip."""
+    btn = QToolButton()
+    btn.setFixedSize(20, 20)
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setAutoRaise(True)
+
+    # Crisp vector SVG for exclamation mark in a circle
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+      <circle cx="12" cy="12" r="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="2"/>
+      <line x1="12" y1="7" x2="12" y2="13" stroke="#0284c7" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="12" cy="17" r="1.3" fill="#0284c7"/>
+    </svg>"""
+
+    try:
+        from PyQt5.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pix = QPixmap(18, 18)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        renderer.render(p)
+        p.end()
+        btn.setIcon(QIcon(pix))
+    except Exception:
+        btn.setText("!")
+
+    btn.setStyleSheet("""
+        QToolButton {
+            border: 1px solid #bae6fd;
+            border-radius: 10px;
+            background-color: #f0f9ff;
+            color: #0284c7;
+            font-weight: bold;
+            font-size: 11px;
+            padding: 0;
+            margin-left: 6px;
+        }
+        QToolButton:hover {
+            background-color: #e0f2fe;
+            border-color: #0284c7;
+        }
+    """)
+    if tip_text:
+        btn.setToolTip(tip_text)
+    return btn
 
 
 class BaseActionCard(QFrame):
@@ -57,6 +107,10 @@ class BaseActionCard(QFrame):
         self.title_label = QLabel(f"<b>{self.display_title}</b>")
         self.title_label.setStyleSheet(f"color: {self.color_border}; font-size: 13px;")
         self.header_layout.addWidget(self.title_label)
+
+        # SVG Exclamation Mark Tip Button
+        self.btn_tip = create_svg_tip_button()
+        self.header_layout.addWidget(self.btn_tip)
         self.header_layout.addStretch()
 
         # Action buttons
@@ -97,6 +151,14 @@ class BaseActionCard(QFrame):
     def set_step_number(self, num: int):
         self.title_label.setText(f"<b>第 {num} 步 · {self.display_title}</b>")
 
+    def set_tip_text(self, tip_text: str):
+        """Set the tooltip on the SVG exclamation mark button."""
+        if tip_text:
+            self.btn_tip.setToolTip(tip_text)
+            self.btn_tip.setVisible(True)
+        else:
+            self.btn_tip.setVisible(False)
+
     def setup_ui(self):
         """Override to add specific fields."""
         pass
@@ -117,6 +179,8 @@ class ExtractCellCard(BaseActionCard):
     color_border = "#0ea5e9"
 
     def setup_ui(self):
+        self.set_tip_text("提取指定行列坐标单元格文本，存入变量供后续流程使用 {{变量名}} 引用")
+
         pos_layout = QHBoxLayout()
         self.spin_row = QSpinBox()
         self.spin_row.setRange(0, 9999)
@@ -136,10 +200,6 @@ class ExtractCellCard(BaseActionCard):
         self.edit_var.setPlaceholderText("存储到的变量名，如: id")
         self.edit_var.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("暂存变量名:", self.edit_var)
-
-        tip = QLabel("<font color='#64748b'>提取指定行列单元格文本，供后续流程使用 {{变量名}} 引用</font>")
-        tip.setWordWrap(True)
-        self.form_layout.addRow("", tip)
 
     def load_config(self, config: Dict[str, Any]):
         pos = config.get("position") or config.get("操作位置") or [0, 0]
@@ -164,6 +224,8 @@ class HttpRequestCard(BaseActionCard):
     color_border = "#6366f1"
 
     def setup_ui(self):
+        self.set_tip_text("同步等待网络接口返回并按回调映射提取 JSON 字段；若超时或发生网络错误将终止后续流程并弹窗报警")
+
         method_url_layout = QHBoxLayout()
         self.combo_method = QComboBox()
         self.combo_method.addItems(["GET", "POST", "PUT", "DELETE", "PATCH"])
@@ -182,7 +244,7 @@ class HttpRequestCard(BaseActionCard):
         self.form_layout.addRow("请求头 (Headers):", self.edit_headers)
 
         self.edit_body = QTextEdit()
-        self.edit_body.setMaximumHeight(70)
+        self.edit_body.setMaximumHeight(65)
         self.edit_body.setPlaceholderText('请求体 (支持 {{变量}})，如: {"id": "{{id}}"}')
         self.edit_body.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("请求体 (Body):", self.edit_body)
@@ -200,10 +262,6 @@ class HttpRequestCard(BaseActionCard):
         self.edit_callback.setPlaceholderText('变量映射 JSON, 如: {"newData": "res.data[0]"}')
         self.edit_callback.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("回调提取 (Callback):", self.edit_callback)
-
-        tip = QLabel("<font color='#64748b'>同步等待请求完成并按回调映射提取 JSON 字段；若超时或错误将终止后续流程并提示</font>")
-        tip.setWordWrap(True)
-        self.form_layout.addRow("", tip)
 
     def load_config(self, config: Dict[str, Any]):
         method = config.get("method") or config.get("方法") or "GET"
@@ -274,6 +332,8 @@ class UserInputCard(BaseActionCard):
     color_border = "#f59e0b"
 
     def setup_ui(self):
+        self.set_tip_text("执行到该步骤会弹出模态对话框，阻塞等待用户输入文字并存入指定上下文变量")
+
         self.edit_prompt = QLineEdit("请输入要提取第几个")
         self.edit_prompt.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("提示文本 (Prompt):", self.edit_prompt)
@@ -286,9 +346,6 @@ class UserInputCard(BaseActionCard):
         self.edit_default.setPlaceholderText("可选默认值")
         self.edit_default.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("输入默认值:", self.edit_default)
-
-        tip = QLabel("<font color='#64748b'>执行到该步骤会弹出模态对话框，由用户输入并存入变量</font>")
-        self.form_layout.addRow("", tip)
 
     def load_config(self, config: Dict[str, Any]):
         p = config.get("prompt") or config.get("提示文本") or "请输入要提取第几个"
@@ -314,12 +371,14 @@ class ShowMessageCard(BaseActionCard):
     color_border = "#10b981"
 
     def setup_ui(self):
+        self.set_tip_text("弹出标准提示对话框展示处理结果，支持使用 {{变量名}} 动态插值")
+
         self.edit_title = QLineEdit("处理结果提示")
         self.edit_title.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("弹窗标题:", self.edit_title)
 
         self.edit_content = QTextEdit()
-        self.edit_content.setMaximumHeight(70)
+        self.edit_content.setMaximumHeight(65)
         self.edit_content.setPlaceholderText("如: 新内容为: {{newData}}，用户选择: {{index}}")
         self.edit_content.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("提示内容 (支持 {{变量}}):", self.edit_content)
@@ -338,6 +397,106 @@ class ShowMessageCard(BaseActionCard):
         }
 
 
+class ToastCard(BaseActionCard):
+    """Card for floating toast notification."""
+    action_type = "toast"
+    display_title = "弹出冒泡窗 (Toast Notification)"
+    color_border = "#06b6d4"
+
+    def setup_ui(self):
+        self.set_tip_text("弹出轻量级半透明浮动冒泡窗；可配置停留时长、是否阻塞流程、显示屏幕位置或持续跟随鼠标移动")
+
+        self.edit_content = QTextEdit()
+        self.edit_content.setMaximumHeight(60)
+        self.edit_content.setPlaceholderText("输入冒泡提示内容 (支持 {{变量}}，若为空则跳过不显示)")
+        self.edit_content.textChanged.connect(self.changed.emit)
+        self.form_layout.addRow("提示内容 (支持空):", self.edit_content)
+
+        # Duration & Blocking in one row
+        timing_row = QHBoxLayout()
+        self.spin_duration = QSpinBox()
+        self.spin_duration.setRange(200, 60000)
+        self.spin_duration.setSingleStep(500)
+        self.spin_duration.setValue(2000)
+        self.spin_duration.setSuffix(" ms")
+        self.spin_duration.valueChanged.connect(self.changed.emit)
+        timing_row.addWidget(self.spin_duration)
+
+        self.chk_blocking = QCheckBox("阻塞模式 (等待弹窗消失才执行下一步)")
+        self.chk_blocking.setChecked(False)
+        self.chk_blocking.toggled.connect(self.changed.emit)
+        timing_row.addWidget(self.chk_blocking)
+        timing_row.addStretch()
+        self.form_layout.addRow("持续时间与阻塞:", timing_row)
+
+        # Screen & Position
+        pos_row = QHBoxLayout()
+        self.combo_screen = QComboBox()
+        self.combo_screen.addItem("鼠标所在屏幕", "cursor")
+        self.combo_screen.addItem("所有屏幕", "all")
+        self.combo_screen.currentIndexChanged.connect(self.changed.emit)
+        pos_row.addWidget(self.combo_screen, 1)
+
+        self.combo_position = QComboBox()
+        self.combo_position.addItem("底部居中", "bottom_center")
+        self.combo_position.addItem("顶部居中", "top_center")
+        self.combo_position.addItem("正中间", "center")
+        self.combo_position.addItem("持续跟随鼠标", "follow_mouse")
+        self.combo_position.currentIndexChanged.connect(self._on_position_changed)
+        self.combo_position.currentIndexChanged.connect(self.changed.emit)
+        pos_row.addWidget(self.combo_position, 1)
+
+        self.lbl_follow_tip = QLabel("<font color='#0284c7'>[跟随鼠标移动]</font>")
+        self.lbl_follow_tip.setVisible(False)
+        pos_row.addWidget(self.lbl_follow_tip)
+
+        self.form_layout.addRow("显示屏幕与位置:", pos_row)
+
+    def _on_position_changed(self):
+        is_follow = self.combo_position.currentData() == "follow_mouse"
+        self.combo_screen.setEnabled(not is_follow)
+        self.lbl_follow_tip.setVisible(is_follow)
+
+    def load_config(self, config: Dict[str, Any]):
+        c = (
+            config.get("content")
+            if "content" in config
+            else config.get("内容", "数据已处理完成")
+        )
+        self.edit_content.setText(str(c) if c is not None else "")
+
+        from src.core.actions.toast import parse_duration_ms
+        d = config.get("duration") or config.get("持续时间") or 2000
+        self.spin_duration.setValue(parse_duration_ms(d))
+
+        b = bool(config.get("blocking", config.get("是否阻塞", False)))
+        self.chk_blocking.setChecked(b)
+
+        scr = str(config.get("screen") or config.get("显示的屏幕") or "cursor").lower()
+        idx_scr = 1 if scr in ("all", "所有屏幕") else 0
+        self.combo_screen.setCurrentIndex(idx_scr)
+
+        pos = str(config.get("position") or config.get("显示的位置") or "bottom_center").lower()
+        pos_map = {
+            "bottom_center": 0, "底部居中": 0,
+            "top_center": 1, "顶部居中": 1,
+            "center": 2, "正中间": 2,
+            "follow_mouse": 3, "持续跟随鼠标": 3, "跟随鼠标": 3
+        }
+        self.combo_position.setCurrentIndex(pos_map.get(pos, 0))
+        self._on_position_changed()
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "action": "toast",
+            "content": self.edit_content.toPlainText(),
+            "duration": self.spin_duration.value(),
+            "blocking": self.chk_blocking.isChecked(),
+            "screen": self.combo_screen.currentData(),
+            "position": self.combo_position.currentData(),
+        }
+
+
 class WriteClipboardCard(BaseActionCard):
     """Card for writing back to clipboard."""
     action_type = "write_clipboard"
@@ -345,20 +504,18 @@ class WriteClipboardCard(BaseActionCard):
     color_border = "#ec4899"
 
     def setup_ui(self):
+        self.set_tip_text("若选择 table 类型，会将 CSV 逗号分割数据解析并以 Excel 原生表格格式 (TSV) 写入系统剪切板，粘贴时直接分列分行！")
+
         self.combo_type = QComboBox()
         self.combo_type.addItems(["table", "text"])
         self.combo_type.currentTextChanged.connect(self.changed.emit)
         self.form_layout.addRow("写入格式类型:", self.combo_type)
 
         self.edit_data = QTextEdit()
-        self.edit_data.setMaximumHeight(80)
+        self.edit_data.setMaximumHeight(70)
         self.edit_data.setPlaceholderText("支持 {{变量}}。若选择 table，在此输入逗号分隔 CSV，例如:\n{{id}},{{newData}},{{index}}")
         self.edit_data.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("写入数据内容:", self.edit_data)
-
-        tip = QLabel("<font color='#64748b'>若选择 table 类型，会将 CSV 逗号分割数据解析并以 Excel 原生表格格式 (TSV) 写入系统剪切板，粘贴时直接分列分行！</font>")
-        tip.setWordWrap(True)
-        self.form_layout.addRow("", tip)
 
     def load_config(self, config: Dict[str, Any]):
         t = (config.get("type") or config.get("类型") or "text").lower()
@@ -383,6 +540,8 @@ class FileOpsCard(BaseActionCard):
     color_border = "#8b5cf6"
 
     def setup_ui(self):
+        self.set_tip_text("执行本地文件读取、覆盖写入或末尾追加操作，路径与内容均支持 {{变量}}")
+
         self.combo_op = QComboBox()
         self.combo_op.addItems(["write", "read", "append"])
         self.combo_op.currentTextChanged.connect(self.changed.emit)
@@ -393,7 +552,7 @@ class FileOpsCard(BaseActionCard):
         self.form_layout.addRow("文件路径:", self.edit_path)
 
         self.edit_content = QTextEdit()
-        self.edit_content.setMaximumHeight(60)
+        self.edit_content.setMaximumHeight(55)
         self.edit_content.setPlaceholderText("写入内容 (支持 {{变量}})")
         self.edit_content.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("写入内容 / 目标变量:", self.edit_content)
@@ -438,6 +597,9 @@ def create_card_for_action(action_config: Dict[str, Any], parent: Optional[QWidg
         "用户输入": UserInputCard,
         "show_message": ShowMessageCard,
         "弹出提示框": ShowMessageCard,
+        "toast": ToastCard,
+        "弹出冒泡窗": ToastCard,
+        "冒泡窗": ToastCard,
         "write_clipboard": WriteClipboardCard,
         "写入剪切板": WriteClipboardCard,
         "file_ops": FileOpsCard,

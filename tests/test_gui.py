@@ -60,6 +60,48 @@ def test_block_editor_load_and_dump(qapp):
     assert len(editor.cards) == 2
 
 
+def test_svg_tip_button_and_toast_card(qapp):
+    from src.gui.action_cards import ToastCard, ExtractCellCard
+
+    cell_card = ExtractCellCard()
+    assert cell_card.btn_tip is not None
+    assert "提取指定行列" in cell_card.btn_tip.toolTip()
+
+    toast_card = ToastCard({
+        "content": "提示: {{id}}",
+        "duration": 3500,
+        "blocking": True,
+        "screen": "all",
+        "position": "follow_mouse",
+    })
+    assert toast_card.btn_tip is not None
+    assert "浮动冒泡" in toast_card.btn_tip.toolTip()
+    assert toast_card.edit_content.toPlainText() == "提示: {{id}}"
+    assert toast_card.spin_duration.value() == 3500
+    assert toast_card.chk_blocking.isChecked() is True
+    # Follow mouse disables screen combo
+    assert toast_card.combo_screen.isEnabled() is False
+    assert toast_card.combo_position.currentData() == "follow_mouse"
+
+    cfg = toast_card.to_config()
+    assert cfg["action"] == "toast"
+    assert cfg["duration"] == 3500
+    assert cfg["blocking"] is True
+    assert cfg["position"] == "follow_mouse"
+
+
+def test_toast_window_and_manager(qapp):
+    from src.gui.toast_window import ToastWindow, ToastManager
+    w = ToastWindow("Hello Toast", duration_ms=2000, position_mode="top_center")
+    assert w.content == "Hello Toast"
+    assert w.duration_ms == 2000
+    w.show()
+    w.close()
+
+    ToastManager.show("测试冒泡", duration_ms=1000, position_mode="center", screen_mode="all")
+    ToastManager.close_all()
+
+
 def test_json_editor_sync(qapp):
     editor = JsonEditorWidget()
     rule = RuleConfig(
