@@ -90,6 +90,65 @@ def test_svg_tip_button_and_toast_card(qapp):
     assert cfg["position"] == "follow_mouse"
 
 
+def test_vscode_scrollbar(qapp):
+    from src.gui.vscode_scrollbar import VSCodeScrollBar
+    from src.gui.action_cards import ExtractCellCard, HttpRequestCard, WriteClipboardCard
+    from PyQt5.QtWidgets import QScrollArea, QWidget, QVBoxLayout
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtCore import QPoint, Qt
+
+    sa = QScrollArea()
+    sa.resize(400, 500)
+    container = QWidget()
+    lay = QVBoxLayout(container)
+    card1 = ExtractCellCard()
+    card2 = HttpRequestCard()
+    card3 = WriteClipboardCard()
+    card1.setFixedHeight(200)
+    card2.setFixedHeight(250)
+    card3.setFixedHeight(200)
+    lay.addWidget(card1)
+    lay.addWidget(card2)
+    lay.addWidget(card3)
+    sa.setWidget(container)
+
+    cards = [card1, card2, card3]
+    sb = VSCodeScrollBar(sa, cards_getter=lambda: cards)
+    sa.setVerticalScrollBar(sb)
+    sa.show()
+    qapp.processEvents()
+
+    assert sb.width() == 24
+    assert sb.minimum() == 0
+
+    # Total content height
+    total_h = sb._get_total_content_height()
+    assert total_h >= 650
+
+    # Markers check
+    markers = sb._get_card_markers(24.0, 500.0, float(total_h))
+    assert len(markers) == 3
+    assert markers[0]["title"] == card1.display_title
+    assert markers[0]["is_visible"] is True  # Top card is visible at scroll 0
+
+    # Test clicking marker 3 to scroll to it
+    m3_pos = markers[2]["rect"].center().toPoint()
+    press_event = QMouseEvent(QMouseEvent.MouseButtonPress, m3_pos, Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    sb.mousePressEvent(press_event)
+    assert sb.value() > 0
+
+    # Test mouse hover tooltip
+    m1_pos = markers[0]["rect"].center().toPoint()
+    move_event = QMouseEvent(QMouseEvent.MouseMove, m1_pos, Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+    sb.mouseMoveEvent(move_event)
+    assert sb._hovered_idx == 0
+    assert "提取单元格" in sb.toolTip()
+
+    # Repaint without errors
+    sb.update()
+    qapp.processEvents()
+
+
 def test_toast_window_and_manager(qapp):
     from src.gui.toast_window import ToastWindow, ToastManager
     w = ToastWindow("Hello Toast", duration_ms=2000, position_mode="top_center")

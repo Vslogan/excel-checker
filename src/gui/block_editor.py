@@ -36,6 +36,7 @@ from src.gui.action_cards import (
     WriteClipboardCard,
     create_card_for_action,
 )
+from src.gui.vscode_scrollbar import VSCodeScrollBar
 
 
 class TriggerConfigTab(QWidget):
@@ -257,6 +258,11 @@ class WorkflowPipelineTab(QWidget):
         self.cards_layout.addStretch()
 
         self.scroll_area.setWidget(self.cards_container)
+
+        # VS Code style transparent overview ruler / minimap scrollbar
+        self.vscode_scrollbar = VSCodeScrollBar(self.scroll_area, cards_getter=lambda: self.cards)
+        self.scroll_area.setVerticalScrollBar(self.vscode_scrollbar)
+
         layout.addWidget(self.scroll_area)
 
     def add_card_by_type(self, action_type: str, config: Optional[Dict[str, Any]] = None):
@@ -324,6 +330,8 @@ class WorkflowPipelineTab(QWidget):
             card.btn_up.setEnabled(i > 0)
             card.btn_down.setEnabled(i < len(self.cards) - 1)
         self.lbl_step_count.setText(f"当前共 {len(self.cards)} 个步骤")
+        if hasattr(self, "vscode_scrollbar"):
+            self.vscode_scrollbar.update()
 
     def clear_cards(self):
         for card in list(self.cards):
@@ -331,6 +339,8 @@ class WorkflowPipelineTab(QWidget):
             card.deleteLater()
         self.cards.clear()
         self._renumber_steps()
+        if hasattr(self, "vscode_scrollbar"):
+            self.vscode_scrollbar.update()
 
 
 class BlockEditorWidget(QWidget):
