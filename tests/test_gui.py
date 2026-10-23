@@ -85,11 +85,11 @@ def test_main_window_init(qapp):
     assert win.combo_configs.count() >= 1
 
     # Toggle monitor
-    assert not win._is_monitoring_active
+    assert not win.clipboard_watcher.is_monitoring
     win.toggle_monitor()
-    assert win._is_monitoring_active
+    assert win.clipboard_watcher.is_monitoring
     win.toggle_monitor()
-    assert not win._is_monitoring_active
+    assert not win.clipboard_watcher.is_monitoring
 
 
 def test_simulator_widget_run(qapp):

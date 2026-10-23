@@ -29,14 +29,15 @@ from PyQt5.QtWidgets import (
 )
 
 from src.core.config_model import RuleConfig
-from src.core.engine import WorkflowEngine
-from src.core.monitor import ClipboardMonitor
+from src.core.engine import WorkflowEngine, WorkflowExecutionResult
 from src.core.table_parser import TableData
 from src.gui.block_editor import BlockEditorWidget
+from src.gui.clipboard_watcher import ClipboardWatcher
 from src.gui.json_editor_widget import JsonEditorWidget
-from src.gui.qt_delegate import QtUIDelegate
+from src.gui.qt_delegate import ThreadSafeUIDelegate
 from src.gui.simulator_widget import SimulatorWidget
 from src.gui.style import APP_STYLESHEET
+from src.gui.worker import WorkflowWorker
 
 
 class MainWindow(QMainWindow):
@@ -58,20 +59,18 @@ class MainWindow(QMainWindow):
         os.makedirs(self.config_dir, exist_ok=True)
 
         self.engine = WorkflowEngine(self.config_dir)
-        self.ui_delegate = QtUIDelegate(self)
-        self.ui_delegate.log_emitted.connect(self.append_log)
+        self.ui_delegate = ThreadSafeUIDelegate(self)
+        self.ui_delegate.on_log_callback = self.append_log
 
-        self.monitor = ClipboardMonitor(self.engine, ui_delegate=self.ui_delegate)
+        # Robust clipboard watcher with debouncing and watchdog
+        self.clipboard_watcher = ClipboardWatcher(self, debounce_ms=80, watchdog_interval_ms=800)
+        self.clipboard_watcher.text_captured.connect(self._on_clipboard_text_captured)
+
         self.current_file_path: Optional[str] = None
-        self._is_monitoring_active: bool = False
+        self.current_worker: Optional[WorkflowWorker] = None
 
         self.setup_ui()
         self.load_config_list()
-
-        # Connect clipboard signal
-        clip = QApplication.clipboard()
-        if clip:
-            clip.dataChanged.connect(self._on_clipboard_data_changed)
 
         # Timer for hot reload checking
         self.hot_reload_timer = QTimer(self)
@@ -313,17 +312,22 @@ class MainWindow(QMainWindow):
 
     def toggle_monitor(self):
         """Toggle live background clipboard monitoring."""
-        self._is_monitoring_active = not self._is_monitoring_active
-        if self._is_monitoring_active:
+        if not self.clipboard_watcher.is_monitoring:
             rule = self.get_active_rule()
             self.engine.active_rule = rule
+            self.clipboard_watcher.start_monitoring()
+
             self.btn_toggle_monitor.setText("停止后台监控 (运行中)")
             self.btn_toggle_monitor.setProperty("id", "dangerBtn")
             self.btn_toggle_monitor.setStyle(self.btn_toggle_monitor.style())
             self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({rule.table_size[0]}x{rule.table_size[1]})")
             self.lbl_monitor_status.setStyleSheet("color: #16a34a; font-weight: bold; margin-left: 6px;")
-            self.append_log(f"--- 后台剪切板监控已启动 (监听尺寸: {rule.table_size[0]}x{rule.table_size[1]}) ---")
+            self.append_log(f"--- 后台剪切板监控已启动 (防断联双重机制就绪, 监听尺寸: {rule.table_size[0]}x{rule.table_size[1]}) ---")
         else:
+            self.clipboard_watcher.stop_monitoring()
+            if self.current_worker and self.current_worker.isRunning():
+                self.current_worker.cancel()
+
             self.btn_toggle_monitor.setText("开启该规则后台监控")
             self.btn_toggle_monitor.setProperty("id", "successBtn")
             self.btn_toggle_monitor.setStyle(self.btn_toggle_monitor.style())
@@ -331,21 +335,9 @@ class MainWindow(QMainWindow):
             self.lbl_monitor_status.setStyleSheet("color: #64748b; font-weight: bold; margin-left: 6px;")
             self.append_log("--- 后台剪切板监控已暂停 ---")
 
-    def _on_clipboard_data_changed(self):
-        """Called when system clipboard content changes."""
-        if not self._is_monitoring_active:
-            return
-
-        clip = QApplication.clipboard()
-        if not clip:
-            return
-
-        text = clip.text()
-        if not text or not text.strip():
-            return
-
-        # Prevent loop if this was what our action wrote
-        if text in self.monitor._ignore_contents or text == self.monitor._last_content:
+    def _on_clipboard_text_captured(self, text: str):
+        """Dispatched on GUI thread after debounce, safely passing heavy work to worker thread."""
+        if not self.clipboard_watcher.is_monitoring:
             return
 
         rule = self.get_active_rule()
@@ -353,7 +345,7 @@ class MainWindow(QMainWindow):
             return
 
         table = TableData.from_text(text)
-        self.append_log(f"[剪切板事件] 捕获新复制内容: 检测尺寸为 {table.rows} 行 x {table.cols} 列 (纯文本预览: {repr(text[:30])})")
+        self.append_log(f"[剪切板事件] 捕获新复制内容: 检测尺寸为 {table.rows} 行 x {table.cols} 列 (纯文本预览: {repr(text[:25])})")
 
         # Step 4: Check table size
         if not table.matches_size(rule.table_size[0], rule.table_size[1]):
@@ -361,22 +353,65 @@ class MainWindow(QMainWindow):
             return
 
         # Step 5: Check extra conditions
-        if rule.extra_condition:
-            if not rule.extra_condition.matches(table):
-                cell_v = table.get_cell(rule.extra_condition.row, rule.extra_condition.col)
-                self.append_log(f"[跳过] 额外条件未满足: 单元格 ({rule.extra_condition.row},{rule.extra_condition.col}) 内容 '{cell_v}' 不匹配正则 '{rule.extra_condition.regex}'")
-                return
+        if rule.extra_condition and not rule.extra_condition.matches(table):
+            cell_v = table.get_cell(rule.extra_condition.row, rule.extra_condition.col)
+            self.append_log(f"[跳过] 额外条件未满足: 单元格 ({rule.extra_condition.row},{rule.extra_condition.col}) 内容 '{cell_v}' 不匹配正则 '{rule.extra_condition.regex}'")
+            return
 
-        # Step 6: All conditions met, execute workflow sequentially!
-        self.append_log(f"🎯 触发条件全部满足！开始顺序执行流程 【{rule.name}】...")
-        self.monitor.ignore_content(text)
+        # Guard: check if another worker is already running
+        if self.current_worker and self.current_worker.isRunning():
+            self.append_log("[提示] 上一个任务正在子线程执行中，已忽略本次快速重复触发。")
+            return
 
-        result = self.engine.execute_rule(rule, table, ui_delegate=self.ui_delegate)
-        if result.success:
-            self.append_log(f"✅ 规则 【{rule.name}】 顺序执行完成！")
+        # Step 6: Dispatch workflow to Background Worker Thread!
+        self.append_log(f"🎯 触发条件全部满足！已将流程 【{rule.name}】 推送至后台子线程执行，主界面保持流畅响应...")
+        self.lbl_monitor_status.setText(f" 🟡 正在后台执行: 【{rule.name}】...")
+        self.lbl_monitor_status.setStyleSheet("color: #f59e0b; font-weight: bold; margin-left: 6px;")
+
+        self.current_worker = WorkflowWorker(
+            rule=rule,
+            table=table,
+            ui_delegate=self.ui_delegate,
+            parent=self,
+        )
+        self.current_worker.progress_signal.connect(self._on_worker_progress)
+        self.current_worker.finished_signal.connect(self._on_worker_finished)
+        self.current_worker.start()
+
+    def _on_worker_progress(self, cur_step: int, total_steps: int, act_name: str):
+        rule = self.get_active_rule()
+        self.lbl_monitor_status.setText(f" 🟡 正在执行 【{rule.name}】 (步骤 {cur_step}/{total_steps}: {act_name})...")
+        self.lbl_monitor_status.setStyleSheet("color: #f59e0b; font-weight: bold; margin-left: 6px;")
+
+    def _on_worker_finished(self, result: WorkflowExecutionResult):
+        rule = self.get_active_rule()
+        if self.clipboard_watcher.is_monitoring:
+            self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({rule.table_size[0]}x{rule.table_size[1]})")
+            self.lbl_monitor_status.setStyleSheet("color: #16a34a; font-weight: bold; margin-left: 6px;")
         else:
-            self.append_log(f"❌ 规则 【{rule.name}】 执行失败: {result.error}")
+            self.lbl_monitor_status.setText(" 监控已暂停")
+            self.lbl_monitor_status.setStyleSheet("color: #64748b; font-weight: bold; margin-left: 6px;")
+
+        # Ignore what our action wrote to prevent self-loop
+        last_clip = self.ui_delegate.clipboard_backup
+        if last_clip:
+            self.clipboard_watcher.ignore_content(last_clip)
+
+        if result.success:
+            self.append_log(f"✅ 规则 【{result.rule_name}】 后台执行完毕！")
+        else:
+            self.append_log(f"❌ 规则 【{result.rule_name}】 执行失败: {result.error}")
             QMessageBox.critical(self, "规则执行错误", f"在步骤 {result.aborted_step} 执行出错:\n{result.error}")
+
+        self.current_worker = None
+
+    def closeEvent(self, event):
+        if self.clipboard_watcher:
+            self.clipboard_watcher.stop_monitoring()
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.current_worker.wait(1000)
+        event.accept()
 
     def _check_hot_reload(self):
         """Periodically check if files on disk changed."""
