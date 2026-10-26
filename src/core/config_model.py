@@ -135,10 +135,7 @@ class RuleConfig:
             return False
 
         # 1. Check table size with fuzzy row / fuzzy col support
-        match_row = self.fuzzy_row or (self.table_size[0] <= 0) or (table.rows == self.table_size[0])
-        match_col = self.fuzzy_col or (self.table_size[1] <= 0) or (table.cols == self.table_size[1])
-
-        if not (match_row and match_col):
+        if not table.matches_size(self.table_size[0], self.table_size[1], fuzzy_row=self.fuzzy_row, fuzzy_col=self.fuzzy_col):
             return False
 
         # 2. Check extra conditions (ALL conditions must match, logical AND)

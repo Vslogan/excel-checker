@@ -241,4 +241,23 @@ python3 main.py --simulate "octocat" --config configs/github_user_lookup.json
 ```bash
 python3 -m pytest -v
 ```
-全套 34 个单元测试与图形化组件集成测试均可离线自动化运行并通过。
+全套自动化测试覆盖所有核心算子、模糊尺寸匹配、Goto 积木顺序排版、配置迁移工具与多线程安全机制。
+
+### 5. 配置文件架构迁移与升级工具 (migrate_configs.py)
+提供完全独立的零依赖脚本，每次发布新版本后运行该脚本，即可自动扫描、升级并验证所有配置文件符合最新框架定义：
+```bash
+# 升级 configs/ 目录下全部配置文件到最新框架架构
+python3 migrate_configs.py
+
+# 预检模式 (Dry-Run / Check-Only)，仅检测不写入文件
+python3 migrate_configs.py --check-only
+
+# 升级并在写入前自动创建 .bak 备份文件
+python3 migrate_configs.py --backup
+
+# 升级指定规则文件
+python3 migrate_configs.py --file configs/my_custom_rule.json
+
+# 键名语言规范化 (keep 保持原样 / chinese 规范为中文键 / english 规范为英文键)
+python3 migrate_configs.py --lang chinese
+```

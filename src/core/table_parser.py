@@ -95,18 +95,33 @@ class TableData:
                 return row_data[col]
         return default
 
-    def matches_size(self, expected_rows: int, expected_cols: int) -> bool:
+    def matches_size(
+        self,
+        expected_rows: int,
+        expected_cols: int,
+        fuzzy_row: bool = False,
+        fuzzy_col: bool = False,
+    ) -> bool:
         """Check if table size matches expected dimensions.
 
-        Note: When expected size is 1x1, standard plain text is also compatible.
+        Args:
+            expected_rows: Expected number of rows (or <= 0 for wildcard)
+            expected_cols: Expected number of columns (or <= 0 for wildcard)
+            fuzzy_row: When True, row dimension is ignored (any row count matches)
+            fuzzy_col: When True, col dimension is ignored (any col count matches)
+
+        Returns:
+            True if matching, False otherwise.
         """
-        if self.rows == expected_rows and self.cols == expected_cols:
+        match_r = fuzzy_row or (expected_rows <= 0) or (self.rows == expected_rows)
+        match_c = fuzzy_col or (expected_cols <= 0) or (self.cols == expected_cols)
+        if match_r and match_c:
             return True
 
         # Special compatibility rule:
-        # If expected is 1x1 and the content is plain text (even if multi-line without tabs),
+        # If expected is 1x1 (or fuzzy dimensions) and the content is plain text (even if multi-line without tabs),
         # treat the entire content as a 1x1 table cell (0, 0).
-        if expected_rows == 1 and expected_cols == 1:
+        if (fuzzy_row or expected_rows == 1) and (fuzzy_col or expected_cols == 1):
             if "\t" not in self.raw_text:
                 return True
 

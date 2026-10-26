@@ -1,22 +1,49 @@
 {
   "name": "订单信息快速提取并保存",
   "trigger": {
-    "table_size": [2, 3],
+    "table_size": [
+      1,
+      2
+    ],
+    "fuzzy_row": false,
+    "fuzzy_col": false,
+    "extra_conditions": [
+      {
+        "position": [
+          0,
+          0
+        ],
+        "regex": "^ORDER-"
+      }
+    ],
     "extra_condition": {
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "regex": "^ORDER-"
     }
   },
   "workflow": [
     {
       "action": "extract_cell",
-      "position": [0, 0],
-      "variable": "order_id"
+      "row": 0,
+      "col": 0,
+      "variable": "order_id",
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "action": "extract_cell",
-      "position": [0, 1],
-      "variable": "customer_name"
+      "row": 0,
+      "col": 1,
+      "variable": "customer_name",
+      "position": [
+        0,
+        1
+      ]
     },
     {
       "action": "show_message",

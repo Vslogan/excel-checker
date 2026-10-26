@@ -249,7 +249,8 @@ class MainWindow(QMainWindow):
             self.block_editor.load_rule(rule)
             self.json_editor.set_rule(rule)
             self.engine.active_rule = rule
-            self.append_log(f"已载入配置文件: {os.path.basename(file_path)} (触发尺寸: {rule.table_size[0]}x{rule.table_size[1]})")
+            size_desc = f"{'任意' if rule.fuzzy_row else rule.table_size[0]}x{'任意' if rule.fuzzy_col else rule.table_size[1]}"
+            self.append_log(f"已载入配置文件: {os.path.basename(file_path)} (触发尺寸: {size_desc})")
         except Exception as e:
             QMessageBox.critical(self, "读取配置失败", f"无法加载 {file_path}: {e}")
 
@@ -335,9 +336,10 @@ class MainWindow(QMainWindow):
             self.btn_toggle_monitor.setText("停止后台监控 (运行中)")
             self.btn_toggle_monitor.setProperty("id", "dangerBtn")
             self.btn_toggle_monitor.setStyle(self.btn_toggle_monitor.style())
-            self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({rule.table_size[0]}x{rule.table_size[1]})")
+            size_desc = f"{'任意' if rule.fuzzy_row else rule.table_size[0]}x{'任意' if rule.fuzzy_col else rule.table_size[1]}"
+            self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({size_desc})")
             self.lbl_monitor_status.setStyleSheet("color: #16a34a; font-weight: bold; margin-left: 6px;")
-            self.append_log(f"--- 后台剪切板监控已启动 (防断联双重机制就绪, 监听尺寸: {rule.table_size[0]}x{rule.table_size[1]}) ---")
+            self.append_log(f"--- 后台剪切板监控已启动 (防断联双重机制就绪, 监听尺寸: {size_desc}) ---")
         else:
             self.clipboard_watcher.stop_monitoring()
             if self.current_worker and self.current_worker.isRunning():
@@ -362,16 +364,19 @@ class MainWindow(QMainWindow):
         table = TableData.from_text(text)
         self.append_log(f"[剪切板事件] 捕获新复制内容: 检测尺寸为 {table.rows} 行 x {table.cols} 列 (纯文本预览: {repr(text[:25])})")
 
-        # Step 4: Check table size
-        if not table.matches_size(rule.table_size[0], rule.table_size[1]):
-            self.append_log(f"[跳过] 复制表格尺寸 ({table.rows}x{table.cols}) 与当前配置 ({rule.table_size[0]}x{rule.table_size[1]}) 不一致，忽略。")
+        # Step 4: Check table size with fuzzy matching
+        if not table.matches_size(rule.table_size[0], rule.table_size[1], fuzzy_row=rule.fuzzy_row, fuzzy_col=rule.fuzzy_col):
+            exp_r = "任意" if rule.fuzzy_row else str(rule.table_size[0])
+            exp_c = "任意" if rule.fuzzy_col else str(rule.table_size[1])
+            self.append_log(f"[跳过] 复制表格尺寸 ({table.rows}x{table.cols}) 与当前配置要求 ({exp_r}x{exp_c}) 不匹配，忽略。")
             return
 
         # Step 5: Check extra conditions
-        if rule.extra_condition and not rule.extra_condition.matches(table):
-            cell_v = table.get_cell(rule.extra_condition.row, rule.extra_condition.col)
-            self.append_log(f"[跳过] 额外条件未满足: 单元格 ({rule.extra_condition.row},{rule.extra_condition.col}) 内容 '{cell_v}' 不匹配正则 '{rule.extra_condition.regex}'")
-            return
+        for idx, cond in enumerate(rule.extra_conditions):
+            if not cond.matches(table):
+                cell_v = table.get_cell(cond.row, cond.col)
+                self.append_log(f"[跳过] 第 {idx + 1} 个额外条件未满足: 单元格 ({cond.row},{cond.col}) 内容 '{cell_v}' 不匹配正则 '{cond.regex}'")
+                return
 
         # Guard: check if another worker is already running
         if self.current_worker and self.current_worker.isRunning():
@@ -401,7 +406,8 @@ class MainWindow(QMainWindow):
     def _on_worker_finished(self, result: WorkflowExecutionResult):
         rule = self.get_active_rule()
         if self.clipboard_watcher.is_monitoring:
-            self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({rule.table_size[0]}x{rule.table_size[1]})")
+            size_desc = f"{'任意' if rule.fuzzy_row else rule.table_size[0]}x{'任意' if rule.fuzzy_col else rule.table_size[1]}"
+            self.lbl_monitor_status.setText(f" 正在监控剪切板 · 激活规则: 【{rule.name}】 ({size_desc})")
             self.lbl_monitor_status.setStyleSheet("color: #16a34a; font-weight: bold; margin-left: 6px;")
         else:
             self.lbl_monitor_status.setText(" 监控已暂停")

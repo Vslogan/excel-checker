@@ -588,9 +588,6 @@ class WorkflowPipelineTab(QWidget):
             if target_idx != old_idx:
                 self.cards.remove(card)
                 self.cards.insert(target_idx, card)
-                for idx, c in enumerate(self.cards):
-                    self.cards_layout.removeWidget(c)
-                    self.cards_layout.insertWidget(idx, c)
                 self._renumber_steps()
                 self.changed.emit()
 
@@ -606,6 +603,12 @@ class WorkflowPipelineTab(QWidget):
         self._in_delete_zone = False
         self._drop_index = -1
 
+    def _on_card_changed(self, card: BaseActionCard):
+        # Refresh indentation or jump markers if branching or goto target changed
+        if getattr(card, "action_type", "") in ("goto", "if_else"):
+            self._renumber_steps()
+        self.changed.emit()
+
     def add_card_by_type(self, action_type: str, config: Optional[Dict[str, Any]] = None):
         cfg = dict(config or {})
         cfg["action"] = action_type
@@ -613,7 +616,7 @@ class WorkflowPipelineTab(QWidget):
         self.add_card(card)
 
     def add_card(self, card: BaseActionCard):
-        card.changed.connect(self.changed.emit)
+        card.changed.connect(lambda: self._on_card_changed(card))
         card.delete_requested.connect(self.remove_card)
         card.move_up_requested.connect(self.move_card_up)
         card.move_down_requested.connect(self.move_card_down)
@@ -626,14 +629,12 @@ class WorkflowPipelineTab(QWidget):
             card.jump_requested.connect(self.scroll_to_step)
 
         self.cards.append(card)
-        self.cards_layout.insertWidget(len(self.cards) - 1, card)
         self._renumber_steps()
         self.changed.emit()
 
     def remove_card(self, card: BaseActionCard):
         if card in self.cards:
             self.cards.remove(card)
-            self.cards_layout.removeWidget(card)
             card.deleteLater()
             self._renumber_steps()
             self.changed.emit()
@@ -642,8 +643,6 @@ class WorkflowPipelineTab(QWidget):
         idx = self.cards.index(card)
         if idx > 0:
             self.cards[idx], self.cards[idx - 1] = self.cards[idx - 1], self.cards[idx]
-            self.cards_layout.removeWidget(card)
-            self.cards_layout.insertWidget(idx - 1, card)
             self._renumber_steps()
             self.changed.emit()
 
@@ -651,8 +650,6 @@ class WorkflowPipelineTab(QWidget):
         idx = self.cards.index(card)
         if idx < len(self.cards) - 1:
             self.cards[idx], self.cards[idx + 1] = self.cards[idx + 1], self.cards[idx]
-            self.cards_layout.removeWidget(card)
-            self.cards_layout.insertWidget(idx + 1, card)
             self._renumber_steps()
             self.changed.emit()
 
@@ -660,7 +657,7 @@ class WorkflowPipelineTab(QWidget):
         cfg = card.to_config()
         idx = self.cards.index(card)
         new_card = create_card_for_action(cfg)
-        new_card.changed.connect(self.changed.emit)
+        new_card.changed.connect(lambda: self._on_card_changed(new_card))
         new_card.delete_requested.connect(self.remove_card)
         new_card.move_up_requested.connect(self.move_card_up)
         new_card.move_down_requested.connect(self.move_card_down)
@@ -672,7 +669,6 @@ class WorkflowPipelineTab(QWidget):
             new_card.jump_requested.connect(self.scroll_to_step)
 
         self.cards.insert(idx + 1, new_card)
-        self.cards_layout.insertWidget(idx + 1, new_card)
         self._renumber_steps()
         self.changed.emit()
 
@@ -728,9 +724,12 @@ class WorkflowPipelineTab(QWidget):
 
         # 2. Re-create GotoTargetMarkerWidget placeholders at target steps
         for marker in self._marker_widgets:
-            self.cards_layout.removeWidget(marker)
             marker.deleteLater()
         self._marker_widgets.clear()
+
+        # Detach all existing items from cards_layout without destroying card widgets
+        while self.cards_layout.count() > 0:
+            self.cards_layout.takeAt(0)
 
         goto_targets: Dict[int, List[int]] = {}
         for i, card in enumerate(self.cards):
@@ -740,14 +739,17 @@ class WorkflowPipelineTab(QWidget):
                 if 1 <= target_step <= len(self.cards):
                     goto_targets.setdefault(target_step, []).append(i + 1)
 
-        for target_step, from_steps in sorted(goto_targets.items()):
-            target_card = self.cards[target_step - 1]
-            marker = GotoTargetMarkerWidget(target_step=target_step, from_steps=from_steps)
-            marker.jump_to_source_requested.connect(self.scroll_to_step)
-            idx_in_layout = self.cards_layout.indexOf(target_card)
-            if idx_in_layout >= 0:
-                self.cards_layout.insertWidget(idx_in_layout, marker)
+        # Re-insert in strict sequential order: target marker (if any) followed by card
+        for i, card in enumerate(self.cards):
+            step_num = i + 1
+            if step_num in goto_targets:
+                marker = GotoTargetMarkerWidget(target_step=step_num, from_steps=sorted(goto_targets[step_num]))
+                marker.jump_to_source_requested.connect(self.scroll_to_step)
+                self.cards_layout.addWidget(marker)
                 self._marker_widgets.append(marker)
+            self.cards_layout.addWidget(card)
+
+        self.cards_layout.addStretch()
 
         self.lbl_step_count.setText(f"当前共 {len(self.cards)} 个步骤")
         if hasattr(self, "vscode_scrollbar"):
@@ -755,15 +757,18 @@ class WorkflowPipelineTab(QWidget):
 
     def clear_cards(self):
         for marker in self._marker_widgets:
-            self.cards_layout.removeWidget(marker)
             marker.deleteLater()
         self._marker_widgets.clear()
 
         for card in list(self.cards):
-            self.cards_layout.removeWidget(card)
             card.deleteLater()
         self.cards.clear()
-        self._renumber_steps()
+
+        while self.cards_layout.count() > 0:
+            self.cards_layout.takeAt(0)
+        self.cards_layout.addStretch()
+
+        self.lbl_step_count.setText("当前共 0 个步骤")
         if hasattr(self, "vscode_scrollbar"):
             self.vscode_scrollbar.update()
 

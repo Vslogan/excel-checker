@@ -149,20 +149,23 @@ class SimulatorWidget(QWidget):
         text = self.input_edit.toPlainText()
         table = TableData.from_text(text)
 
-        # Check size match
-        if not table.matches_size(rule.table_size[0], rule.table_size[1]):
-            self.lbl_match_status.setText(f"❌ 尺寸不匹配 (期望 {rule.table_size[0]}x{rule.table_size[1]}, 实际 {table.rows}x{table.cols})")
+        # Check size match with fuzzy support
+        if not table.matches_size(rule.table_size[0], rule.table_size[1], fuzzy_row=rule.fuzzy_row, fuzzy_col=rule.fuzzy_col):
+            exp_r = "任意" if rule.fuzzy_row else str(rule.table_size[0])
+            exp_c = "任意" if rule.fuzzy_col else str(rule.table_size[1])
+            self.lbl_match_status.setText(f"❌ 尺寸不匹配 (期望 {exp_r}x{exp_c}, 实际 {table.rows}x{table.cols})")
             self.lbl_match_status.setStyleSheet("color: #ef4444; font-weight: bold;")
-            self.log_console.setPlainText(f"[跳过] 表格尺寸不符合规则要求: 期望 {rule.table_size[0]}x{rule.table_size[1]}，实际检测为 {table.rows}x{table.cols}")
+            self.log_console.setPlainText(f"[跳过] 表格尺寸不符合规则要求: 期望 {exp_r}x{exp_c}，实际检测为 {table.rows}x{table.cols}")
             return
 
         # Check extra condition
-        if rule.extra_condition and not rule.extra_condition.matches(table):
-            self.lbl_match_status.setText("❌ 额外正则条件不匹配")
-            self.lbl_match_status.setStyleSheet("color: #ef4444; font-weight: bold;")
-            cell_val = table.get_cell(rule.extra_condition.row, rule.extra_condition.col)
-            self.log_console.setPlainText(f"[跳过] 单元格 ({rule.extra_condition.row}, {rule.extra_condition.col}) 内容 '{cell_val}' 不匹配正则: '{rule.extra_condition.regex}'")
-            return
+        for idx, cond in enumerate(rule.extra_conditions):
+            if not cond.matches(table):
+                self.lbl_match_status.setText(f"❌ 额外正则条件未满足 (条件 {idx + 1})")
+                self.lbl_match_status.setStyleSheet("color: #ef4444; font-weight: bold;")
+                cell_val = table.get_cell(cond.row, cond.col)
+                self.log_console.setPlainText(f"[跳过] 单元格 ({cond.row}, {cond.col}) 内容 '{cell_val}' 不匹配正则: '{cond.regex}'")
+                return
 
         self.lbl_match_status.setText("✅ 触发条件全部满足，正在执行流程...")
         self.lbl_match_status.setStyleSheet("color: #16a34a; font-weight: bold;")
