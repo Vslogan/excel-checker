@@ -391,3 +391,81 @@ def test_requirements_gui_enhancements(qapp):
     assert pipe.cards[4]._branch_type == "else"
     assert pipe.cards[5]._indent_level == 0
 
+
+def test_gui_four_new_requirements(qapp):
+    """Test 4 new requirements:
+    1. ExtractCellCard row/col supports variables and expressions
+    2. Fuzzy row/col matching toggles in TriggerConfigTab
+    3. Multiple extra conditions in TriggerConfigTab (all AND)
+    4. Exit action block and toolbar button
+    """
+    from PyQt5.QtWidgets import QPushButton
+    from src.gui.action_cards import ExtractCellCard, ExitCard
+    from src.gui.block_editor import BlockEditorWidget
+
+    editor = BlockEditorWidget()
+    pipe = editor.pipeline_tab
+    trig = editor.trigger_tab
+
+    # 1. ExtractCellCard supports variable strings in row and col
+    card_extract = ExtractCellCard()
+    card_extract.edit_row.setText("target_row")
+    card_extract.edit_col.setText("{{col_idx}}")
+    card_extract.edit_var.setText("extracted_result")
+    cfg = card_extract.to_config()
+    assert cfg["position"] == ["target_row", "{{col_idx}}"]
+    assert cfg["variable"] == "extracted_result"
+
+    # Reload into a new card
+    card_extract2 = ExtractCellCard()
+    card_extract2.load_config(cfg)
+    assert card_extract2.edit_row.text() == "target_row"
+    assert card_extract2.edit_col.text() == "{{col_idx}}"
+
+    # 2. Fuzzy row and fuzzy col checkboxes
+    assert trig.chk_fuzzy_row.isChecked() is False
+    assert trig.spin_rows.isEnabled() is True
+    trig.chk_fuzzy_row.setChecked(True)
+    assert trig.spin_rows.isEnabled() is False
+
+    assert trig.chk_fuzzy_col.isChecked() is False
+    assert trig.spin_cols.isEnabled() is True
+    trig.chk_fuzzy_col.setChecked(True)
+    assert trig.spin_cols.isEnabled() is False
+
+    # 3. Multiple extra conditions
+    trig.chk_extra.setChecked(True)
+    assert len(trig.condition_rows) >= 1
+    trig.clear_conditions()
+    assert len(trig.condition_rows) == 0
+
+    # Add 2 condition rows
+    row1 = trig.add_condition_row(0, 0, r"^ITEM-\d+$")
+    row2 = trig.add_condition_row(1, 2, r"^OK$")
+    assert len(trig.condition_rows) == 2
+
+    # Test live regex on row1
+    row1.edit_test.setText("ITEM-999")
+    assert row1.lbl_result.text() == "匹配成功"
+    row1.edit_test.setText("OTHER")
+    assert row1.lbl_result.text() == "不匹配"
+
+    # Delete row2
+    row2.btn_del.click()
+    assert len(trig.condition_rows) == 1
+
+    # 4. Exit action card & toolbar button "+ 退出"
+    exit_card = ExitCard()
+    assert exit_card.to_config() == {"action": "exit"}
+    assert exit_card.display_title == "退出 (Exit)"
+
+    btn_texts = [b.text() for b in pipe.findChildren(QPushButton)]
+    assert "+ 退出" in btn_texts
+
+    # Add exit card via toolbar click
+    pipe.clear_cards()
+    pipe.add_card_by_type("exit")
+    assert len(pipe.cards) == 1
+    assert pipe.cards[0].action_type == "exit"
+
+

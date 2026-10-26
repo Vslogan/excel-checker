@@ -28,7 +28,12 @@ class ExtraCondition:
         except re.error:
             return False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, use_chinese_keys: bool = False) -> Dict[str, Any]:
+        if use_chinese_keys:
+            return {
+                "位置": [self.row, self.col],
+                "正则表达式": self.regex,
+            }
         return {
             "position": [self.row, self.col],
             "regex": self.regex,
@@ -49,16 +54,46 @@ class ExtraCondition:
         return None
 
 
-@dataclass
 class RuleConfig:
     """Complete rule configuration containing trigger predicates and workflow actions."""
 
-    name: str = "未命名规则"
-    table_size: Tuple[int, int] = (1, 1)  # (rows, cols)
-    extra_condition: Optional[ExtraCondition] = None
-    workflow: List[Dict[str, Any]] = field(default_factory=list)
-    enabled: bool = True
-    file_path: Optional[str] = None
+    def __init__(
+        self,
+        name: str = "未命名规则",
+        table_size: Tuple[int, int] = (1, 1),
+        fuzzy_row: bool = False,
+        fuzzy_col: bool = False,
+        extra_conditions: Optional[List[ExtraCondition]] = None,
+        extra_condition: Optional[ExtraCondition] = None,
+        workflow: Optional[List[Dict[str, Any]]] = None,
+        enabled: bool = True,
+        file_path: Optional[str] = None,
+    ):
+        self.name = name
+        self.table_size = table_size
+        self.fuzzy_row = fuzzy_row
+        self.fuzzy_col = fuzzy_col
+        if extra_conditions is not None:
+            self.extra_conditions = list(extra_conditions)
+        elif extra_condition is not None:
+            self.extra_conditions = [extra_condition]
+        else:
+            self.extra_conditions = []
+        self.workflow = list(workflow or [])
+        self.enabled = enabled
+        self.file_path = file_path
+
+    @property
+    def extra_condition(self) -> Optional[ExtraCondition]:
+        """Backward-compatibility property for code referencing single extra_condition."""
+        return self.extra_conditions[0] if self.extra_conditions else None
+
+    @extra_condition.setter
+    def extra_condition(self, val: Optional[ExtraCondition]):
+        if val is None:
+            self.extra_conditions = []
+        else:
+            self.extra_conditions = [val]
 
     def validate(self) -> List[str]:
         """Validate configuration integrity, returning list of validation errors."""
@@ -66,14 +101,21 @@ class RuleConfig:
         if not self.name.strip():
             errors.append("规则名称不能为空")
 
-        if self.table_size[0] < 1 or self.table_size[1] < 1:
-            errors.append(f"表格大小必须大于等于 1x1，当前为: {self.table_size[0]}x{self.table_size[1]}")
+        if not self.fuzzy_row and not self.fuzzy_col:
+            if self.table_size[0] < 1 or self.table_size[1] < 1:
+                errors.append(f"表格大小必须大于等于 1x1，当前为: {self.table_size[0]}x{self.table_size[1]}")
+        else:
+            if not self.fuzzy_row and self.table_size[0] < 1:
+                errors.append(f"表格大小行数必须大于等于 1，当前为: {self.table_size[0]}")
+            if not self.fuzzy_col and self.table_size[1] < 1:
+                errors.append(f"表格大小列数必须大于等于 1，当前为: {self.table_size[1]}")
 
-        if self.extra_condition and self.extra_condition.regex:
-            try:
-                re.compile(self.extra_condition.regex)
-            except re.error as e:
-                errors.append(f"额外条件的正则表达式无效: {e}")
+        for idx, cond in enumerate(self.extra_conditions):
+            if cond and cond.regex:
+                try:
+                    re.compile(cond.regex)
+                except re.error as e:
+                    errors.append(f"第 {idx + 1} 个额外条件的正则表达式无效: {e}")
 
         if not self.workflow:
             errors.append("流程中至少需要包含一个动作")
@@ -92,13 +134,17 @@ class RuleConfig:
         if not self.enabled:
             return False
 
-        # 1. Check table size
-        if not table.matches_size(self.table_size[0], self.table_size[1]):
+        # 1. Check table size with fuzzy row / fuzzy col support
+        match_row = self.fuzzy_row or (self.table_size[0] <= 0) or (table.rows == self.table_size[0])
+        match_col = self.fuzzy_col or (self.table_size[1] <= 0) or (table.cols == self.table_size[1])
+
+        if not (match_row and match_col):
             return False
 
-        # 2. Check extra condition
-        if self.extra_condition and not self.extra_condition.matches(table):
-            return False
+        # 2. Check extra conditions (ALL conditions must match, logical AND)
+        for cond in self.extra_conditions:
+            if not cond.matches(table):
+                return False
 
         return True
 
@@ -106,13 +152,13 @@ class RuleConfig:
         """Serialize configuration to dict."""
         if use_chinese_keys:
             trigger_dict: Dict[str, Any] = {
-                "表格大小": list(self.table_size)
+                "表格大小": list(self.table_size),
+                "模糊行数": self.fuzzy_row,
+                "模糊列数": self.fuzzy_col,
             }
-            if self.extra_condition and self.extra_condition.regex:
-                trigger_dict["额外条件"] = {
-                    "位置": [self.extra_condition.row, self.extra_condition.col],
-                    "正则表达式": self.extra_condition.regex,
-                }
+            if self.extra_conditions:
+                trigger_dict["额外条件列表"] = [c.to_dict(use_chinese_keys=True) for c in self.extra_conditions]
+                trigger_dict["额外条件"] = self.extra_conditions[0].to_dict(use_chinese_keys=True)
 
             return {
                 "配置名称": self.name,
@@ -122,10 +168,13 @@ class RuleConfig:
             }
         else:
             trigger_dict = {
-                "table_size": list(self.table_size)
+                "table_size": list(self.table_size),
+                "fuzzy_row": self.fuzzy_row,
+                "fuzzy_col": self.fuzzy_col,
             }
-            if self.extra_condition and self.extra_condition.regex:
-                trigger_dict["extra_condition"] = self.extra_condition.to_dict()
+            if self.extra_conditions:
+                trigger_dict["extra_conditions"] = [c.to_dict() for c in self.extra_conditions]
+                trigger_dict["extra_condition"] = self.extra_conditions[0].to_dict()
 
             return {
                 "name": self.name,
@@ -153,33 +202,71 @@ class RuleConfig:
             or {}
         )
 
-        # Table Size
+        # Table Size & Fuzzy Matching
         size_raw = (
             trigger_raw.get("table_size")
             or trigger_raw.get("表格大小")
             or trigger_raw.get("大小")
             or [1, 1]
         )
+        raw_r = 1
+        raw_c = 1
         if isinstance(size_raw, (list, tuple)) and len(size_raw) >= 2:
-            table_size = (int(size_raw[0]), int(size_raw[1]))
+            raw_r, raw_c = size_raw[0], size_raw[1]
         elif isinstance(size_raw, dict):
-            r = size_raw.get("rows", size_raw.get("row", 1))
-            c = size_raw.get("cols", size_raw.get("col", 1))
-            table_size = (int(r), int(c))
+            raw_r = size_raw.get("rows", size_raw.get("row", size_raw.get("行", 1)))
+            raw_c = size_raw.get("cols", size_raw.get("col", size_raw.get("列", 1)))
         elif isinstance(size_raw, str) and ("x" in size_raw or "*" in size_raw):
             parts = re.split(r"[x*]", size_raw)
-            table_size = (int(parts[0].strip()), int(parts[1].strip()))
-        else:
-            table_size = (1, 1)
+            raw_r, raw_c = parts[0].strip(), parts[1].strip()
 
-        # Extra condition
-        extra_raw = (
-            trigger_raw.get("extra_condition")
+        fuzzy_row = bool(
+            trigger_raw.get("fuzzy_row", False)
+            or trigger_raw.get("模糊行数", False)
+            or str(raw_r) in ("*", "-1", "模糊")
+            or (isinstance(raw_r, (int, float)) and raw_r <= 0)
+        )
+        fuzzy_col = bool(
+            trigger_raw.get("fuzzy_col", False)
+            or trigger_raw.get("模糊列数", False)
+            or str(raw_c) in ("*", "-1", "模糊")
+            or (isinstance(raw_c, (int, float)) and raw_c <= 0)
+        )
+
+        try:
+            r = int(raw_r) if not fuzzy_row else 1
+        except Exception:
+            r = 1
+            fuzzy_row = True
+
+        try:
+            c = int(raw_c) if not fuzzy_col else 1
+        except Exception:
+            c = 1
+            fuzzy_col = True
+
+        table_size = (r, c)
+
+        # Extra conditions (supports multiple conditions)
+        extra_conditions: List[ExtraCondition] = []
+        raw_extras = (
+            trigger_raw.get("extra_conditions")
+            or trigger_raw.get("额外条件列表")
+            or trigger_raw.get("extra_condition")
             or trigger_raw.get("额外条件")
-            or trigger_raw.get("condition")
+            or trigger_raw.get("conditions")
             or None
         )
-        extra_cond = ExtraCondition.from_dict(extra_raw) if extra_raw else None
+        if raw_extras:
+            if isinstance(raw_extras, list):
+                for item in raw_extras:
+                    cond = ExtraCondition.from_dict(item)
+                    if cond:
+                        extra_conditions.append(cond)
+            else:
+                cond = ExtraCondition.from_dict(raw_extras)
+                if cond:
+                    extra_conditions.append(cond)
 
         # Workflow actions
         workflow_raw = (
@@ -198,7 +285,9 @@ class RuleConfig:
         return cls(
             name=str(name),
             table_size=table_size,
-            extra_condition=extra_cond,
+            fuzzy_row=fuzzy_row,
+            fuzzy_col=fuzzy_col,
+            extra_conditions=extra_conditions,
             workflow=list(workflow_raw),
             enabled=bool(enabled),
             file_path=file_path,

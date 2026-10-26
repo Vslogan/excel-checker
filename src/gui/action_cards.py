@@ -316,21 +316,27 @@ class ExtractCellCard(BaseActionCard):
     color_border = "#0ea5e9"
 
     def setup_ui(self):
-        self.set_tip_text("提取指定行列坐标单元格文本，存入变量供后续流程使用 {{变量名}} 引用")
+        tip = (
+            "<b>提取单元格 (Extract Cell)</b><br/>"
+            "提取指定行列坐标单元格文本，存入变量供后续流程使用 {{变量名}} 引用。<br/>"
+            "• 行号与列号支持填写数字 (从 0 开始)，或填入变量名 (如 target_row)、模板 (如 {{r}})。<br/>"
+            "• 执行时自动将变量解析并转换为数字，若非数字将直接报错终止。"
+        )
+        self.btn_tip.setToolTip(tip)
 
         pos_layout = QHBoxLayout()
-        self.spin_row = QSpinBox()
-        self.spin_row.setRange(0, 9999)
-        self.spin_row.setPrefix("行: ")
-        self.spin_row.valueChanged.connect(self.changed.emit)
+        pos_layout.addWidget(QLabel("行号:"))
+        self.edit_row = QLineEdit("0")
+        self.edit_row.setPlaceholderText("数字或变量名 (如: 0 或 my_row)")
+        self.edit_row.textChanged.connect(self.changed.emit)
+        pos_layout.addWidget(self.edit_row)
 
-        self.spin_col = QSpinBox()
-        self.spin_col.setRange(0, 9999)
-        self.spin_col.setPrefix("列: ")
-        self.spin_col.valueChanged.connect(self.changed.emit)
+        pos_layout.addWidget(QLabel("列号:"))
+        self.edit_col = QLineEdit("0")
+        self.edit_col.setPlaceholderText("数字或变量名 (如: 0 或 my_col)")
+        self.edit_col.textChanged.connect(self.changed.emit)
+        pos_layout.addWidget(self.edit_col)
 
-        pos_layout.addWidget(self.spin_row)
-        pos_layout.addWidget(self.spin_col)
         self.form_layout.addRow("单元格位置 (0-based):", pos_layout)
 
         self.edit_var = QLineEdit("id")
@@ -338,18 +344,56 @@ class ExtractCellCard(BaseActionCard):
         self.edit_var.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("暂存变量名:", self.edit_var)
 
+    @property
+    def spin_row(self):
+        class _CompatSpin:
+            def __init__(self, edit): self.edit = edit
+            def value(self):
+                try: return int(self.edit.text())
+                except Exception: return 0
+            def setValue(self, v): self.edit.setText(str(v))
+        return _CompatSpin(self.edit_row)
+
+    @property
+    def spin_col(self):
+        class _CompatSpin:
+            def __init__(self, edit): self.edit = edit
+            def value(self):
+                try: return int(self.edit.text())
+                except Exception: return 0
+            def setValue(self, v): self.edit.setText(str(v))
+        return _CompatSpin(self.edit_col)
+
     def load_config(self, config: Dict[str, Any]):
-        pos = config.get("position") or config.get("操作位置") or [0, 0]
-        r, c = parse_cell_position(pos)
-        self.spin_row.setValue(r)
-        self.spin_col.setValue(c)
+        raw_r = config.get("row") or config.get("行") or config.get("行号")
+        raw_c = config.get("col") or config.get("列") or config.get("列号")
+        if raw_r is not None and raw_c is not None:
+            self.edit_row.setText(str(raw_r))
+            self.edit_col.setText(str(raw_c))
+        else:
+            pos = config.get("position") or config.get("操作位置") or [0, 0]
+            r, c = parse_cell_position(pos)
+            self.edit_row.setText(str(r))
+            self.edit_col.setText(str(c))
+
         var = config.get("variable") or config.get("暂存到的变量名") or "id"
         self.edit_var.setText(str(var))
 
     def to_config(self) -> Dict[str, Any]:
+        row_str = self.edit_row.text().strip()
+        col_str = self.edit_col.text().strip()
+        try:
+            r_val = int(row_str)
+        except ValueError:
+            r_val = row_str
+        try:
+            c_val = int(col_str)
+        except ValueError:
+            c_val = col_str
+
         return {
             "action": "extract_cell",
-            "position": [self.spin_row.value(), self.spin_col.value()],
+            "position": [r_val, c_val],
             "variable": self.edit_var.text().strip(),
         }
 
@@ -1014,6 +1058,32 @@ class GotoCard(BaseActionCard):
         }
 
 
+class ExitCard(BaseActionCard):
+    """Card for immediate exit action block."""
+    action_type = "exit"
+    display_title = "退出 (Exit)"
+    color_border = "#64748b"
+
+    def setup_ui(self):
+        tip = (
+            "<b>退出流程 (Exit)</b><br/>"
+            "执行此积木将立即正常终止并结束整个流水线流程。<br/>"
+            "• 无需传入任何参数。<br/>"
+            "• 常与【如果】分支配合使用，在满足特定条件时提前退出。"
+        )
+        self.btn_tip.setToolTip(tip)
+
+        info_lbl = QLabel("🛑 立即正常终止并退出当前规则流程（无需参数）")
+        info_lbl.setStyleSheet("color: #475569; font-size: 12px; font-weight: 500; padding: 4px 0;")
+        self.form_layout.addRow("", info_lbl)
+
+    def load_config(self, config: Dict[str, Any]):
+        pass
+
+    def to_config(self) -> Dict[str, Any]:
+        return {"action": "exit"}
+
+
 def create_card_for_action(action_config: Dict[str, Any], parent: Optional[QWidget] = None) -> BaseActionCard:
     """Factory creating appropriate action card for config."""
     act_type = (
@@ -1025,6 +1095,10 @@ def create_card_for_action(action_config: Dict[str, Any], parent: Optional[QWidg
     )
 
     card_map = {
+        "exit": ExitCard,
+        "退出": ExitCard,
+        "终止": ExitCard,
+        "结束": ExitCard,
         "compute": ComputeCard,
         "calculate": ComputeCard,
         "计算": ComputeCard,

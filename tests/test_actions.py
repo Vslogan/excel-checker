@@ -453,3 +453,79 @@ def test_variable_naming_validation_and_global_scope():
     assert ctx.get_var("total_sum") == "30"
 
 
+def test_extract_cell_with_variable_coords():
+    """Requirement 1: ExtractCellAction supports row and column passed as variables or templates,
+    auto-casts to number, and reports error on non-numeric values."""
+    table = TableData([["r0c0", "r0c1", "r0c2"], ["r1c0", "r1c1", "r1c2"], ["r2c0", "r2c1", "r2c2"]])
+    ctx = ExecutionContext(table_data=table)
+    delegate = HeadlessUIDelegate()
+
+    # 1. Variables passed as row and col
+    ctx.set_var("target_row", "1")
+    ctx.set_var("target_col", "2")
+    act_var = ExtractCellAction({"row": "target_row", "col": "target_col", "variable": "val_1"})
+    res_var = act_var.execute(ctx, delegate)
+    assert res_var.success
+    assert res_var.output == "r1c2"
+    assert ctx.get_var("val_1") == "r1c2"
+
+    # 2. Template string interpolation: e.g. {{r}}, {{c}}
+    ctx.set_var("r", 2)
+    ctx.set_var("c", 0)
+    act_tmpl = ExtractCellAction({"position": ["{{r}}", "{{c}}"], "variable": "val_2"})
+    res_tmpl = act_tmpl.execute(ctx, delegate)
+    assert res_tmpl.success
+    assert res_tmpl.output == "r2c0"
+    assert ctx.get_var("val_2") == "r2c0"
+
+    # 3. String float conversion e.g. "1.0"
+    act_float = ExtractCellAction({"row": "1.0", "col": "1", "variable": "val_3"})
+    res_float = act_float.execute(ctx, delegate)
+    assert res_float.success
+    assert res_float.output == "r1c1"
+
+    # 4. Non-numeric row string -> error
+    act_err_row = ExtractCellAction({"row": "invalid_number_abc", "col": 0, "variable": "val_err"})
+    res_err_row = act_err_row.execute(ctx, delegate)
+    assert not res_err_row.success
+    assert "不是有效数字" in res_err_row.error
+
+    # 5. Non-numeric variable value -> error
+    ctx.set_var("bad_col", "not_a_num")
+    act_err_var = ExtractCellAction({"row": 0, "col": "bad_col", "variable": "val_err2"})
+    res_err_var = act_err_var.execute(ctx, delegate)
+    assert not res_err_var.success
+    assert "不是有效数字" in res_err_var.error
+
+
+def test_exit_action():
+    """Requirement 4: Exit action cleanly terminates workflow execution immediately."""
+    from src.core.actions.exit import ExitAction
+    from src.core.engine import WorkflowEngine
+    from src.core.config_model import RuleConfig
+
+    ctx = ExecutionContext()
+    delegate = HeadlessUIDelegate()
+    act = ExitAction()
+    res = act.execute(ctx, delegate)
+    assert res.success
+    assert res.is_exit is True
+
+    # Test in engine: steps after exit are NOT executed
+    engine = WorkflowEngine()
+    rule = RuleConfig(
+        name="ExitTest",
+        table_size=(1, 1),
+        workflow=[
+            {"action": "compute", "target_var": "before_exit", "expression": "100"},
+            {"action": "exit"},
+            {"action": "compute", "target_var": "after_exit", "expression": "200"},
+        ]
+    )
+    exec_res = engine.execute_rule(rule, TableData([["x"]]))
+    assert exec_res.success
+    assert exec_res.variables.get("before_exit") == "100"
+    assert "after_exit" not in exec_res.variables  # stopped cleanly!
+
+
+

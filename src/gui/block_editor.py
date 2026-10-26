@@ -29,6 +29,7 @@ from src.core.config_model import ExtraCondition, RuleConfig
 from src.gui.action_cards import (
     BaseActionCard,
     ComputeCard,
+    ExitCard,
     ExtractCellCard,
     FileOpsCard,
     GotoCard,
@@ -43,6 +44,103 @@ from src.gui.action_cards import (
 from src.gui.vscode_scrollbar import VSCodeScrollBar
 
 
+class ExtraConditionRowWidget(QFrame):
+    """Row widget representing one extra cell regex condition with live test."""
+    changed = pyqtSignal()
+    delete_requested = pyqtSignal(object)
+
+    def __init__(self, row: int = 0, col: int = 0, regex: str = "[0-9]{3,}", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QFrame {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+
+        layout.addWidget(QLabel("坐标(0-based):"))
+        self.spin_row = QSpinBox()
+        self.spin_row.setRange(0, 9999)
+        self.spin_row.setPrefix("行: ")
+        self.spin_row.setValue(row)
+        self.spin_row.valueChanged.connect(self.changed.emit)
+        layout.addWidget(self.spin_row)
+
+        self.spin_col = QSpinBox()
+        self.spin_col.setRange(0, 9999)
+        self.spin_col.setPrefix("列: ")
+        self.spin_col.setValue(col)
+        self.spin_col.valueChanged.connect(self.changed.emit)
+        layout.addWidget(self.spin_col)
+
+        layout.addWidget(QLabel("正则:"))
+        self.edit_regex = QLineEdit(regex)
+        self.edit_regex.setPlaceholderText("例如: ^[0-9]+$")
+        self.edit_regex.textChanged.connect(self._test_regex)
+        self.edit_regex.textChanged.connect(self.changed.emit)
+        layout.addWidget(self.edit_regex, 3)
+
+        self.edit_test = QLineEdit()
+        self.edit_test.setPlaceholderText("实时测试输入...")
+        self.edit_test.textChanged.connect(self._test_regex)
+        layout.addWidget(self.edit_test, 2)
+
+        self.lbl_result = QLabel("待测试")
+        self.lbl_result.setStyleSheet("color: #64748b; font-weight: bold; min-width: 65px;")
+        layout.addWidget(self.lbl_result)
+
+        self.btn_del = QPushButton("删除")
+        self.btn_del.setStyleSheet("""
+            QPushButton {
+                background: #fee2e2;
+                color: #dc2626;
+                border: 1px solid #fca5a5;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background: #fecaca; }
+        """)
+        self.btn_del.clicked.connect(lambda: self.delete_requested.emit(self))
+        layout.addWidget(self.btn_del)
+
+        self._test_regex()
+
+    def _test_regex(self):
+        pattern = self.edit_regex.text().strip()
+        sample = self.edit_test.text()
+        if not pattern:
+            self.lbl_result.setText("空正则")
+            self.lbl_result.setStyleSheet("color: #64748b;")
+            return
+        try:
+            compiled = re.compile(pattern)
+            if not sample:
+                self.lbl_result.setText("语法正确")
+                self.lbl_result.setStyleSheet("color: #0284c7;")
+            elif compiled.search(sample):
+                self.lbl_result.setText("匹配成功")
+                self.lbl_result.setStyleSheet("color: #16a34a; font-weight: bold;")
+            else:
+                self.lbl_result.setText("不匹配")
+                self.lbl_result.setStyleSheet("color: #ef4444; font-weight: bold;")
+        except re.error:
+            self.lbl_result.setText("语法错误")
+            self.lbl_result.setStyleSheet("color: #dc2626;")
+
+    def to_condition(self) -> ExtraCondition:
+        return ExtraCondition(
+            row=self.spin_row.value(),
+            col=self.spin_col.value(),
+            regex=self.edit_regex.text().strip(),
+        )
+
+
 class TriggerConfigTab(QWidget):
     """Secondary Tab 1: Trigger Conditions configuration."""
 
@@ -50,6 +148,7 @@ class TriggerConfigTab(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.condition_rows: List[ExtraConditionRowWidget] = []
         self.setup_ui()
 
     def setup_ui(self):
@@ -73,8 +172,8 @@ class TriggerConfigTab(QWidget):
         meta_layout.addRow("启用状态:", self.chk_enabled)
         layout.addWidget(meta_group)
 
-        # Table Dimension Card
-        dim_group = QGroupBox("复制表格大小要求 (必须一致才触发)")
+        # Table Dimension Card (with fuzzy matching)
+        dim_group = QGroupBox("复制表格大小要求 (可设置模糊行/列匹配)")
         dim_layout = QVBoxLayout(dim_group)
         dim_layout.setSpacing(10)
 
@@ -86,6 +185,11 @@ class TriggerConfigTab(QWidget):
         self.spin_rows.valueChanged.connect(self.changed.emit)
         spin_box.addWidget(self.spin_rows)
 
+        self.chk_fuzzy_row = QCheckBox("模糊行数 (任意行)")
+        self.chk_fuzzy_row.toggled.connect(lambda c: self.spin_rows.setEnabled(not c))
+        self.chk_fuzzy_row.toggled.connect(self.changed.emit)
+        spin_box.addWidget(self.chk_fuzzy_row)
+
         self.spin_cols = QSpinBox()
         self.spin_cols.setRange(1, 9999)
         self.spin_cols.setValue(1)
@@ -93,95 +197,138 @@ class TriggerConfigTab(QWidget):
         self.spin_cols.valueChanged.connect(self.changed.emit)
         spin_box.addWidget(self.spin_cols)
 
-        dim_tip = QLabel("<font color='#0284c7'>兼容说明：部分软件复制 1x1 表格时为纯文本，本工具将普通文本统一兼容视为 1x1 表格。</font>")
-        spin_box.addWidget(dim_tip)
+        self.chk_fuzzy_col = QCheckBox("模糊列数 (任意列)")
+        self.chk_fuzzy_col.toggled.connect(lambda c: self.spin_cols.setEnabled(not c))
+        self.chk_fuzzy_col.toggled.connect(self.changed.emit)
+        spin_box.addWidget(self.chk_fuzzy_col)
+
         spin_box.addStretch()
         dim_layout.addLayout(spin_box)
+
+        dim_tip = QLabel("<font color='#0284c7'>💡 说明：模糊匹配时任意行/列尺寸均视为匹配，并将实际尺寸自动存入系统变量 <b>row</b> 与 <b>column</b> 供后续积木引用。</font>")
+        dim_layout.addWidget(dim_tip)
         layout.addWidget(dim_group)
 
-        # Extra Regex Condition Card
-        extra_group = QGroupBox("额外单元格内容条件 (可选)")
+        # Extra Regex Condition Card (Supports Multiple Conditions via AND)
+        extra_group = QGroupBox("额外单元格内容条件 (可选，多个条件必须全部满足)")
         extra_layout = QVBoxLayout(extra_group)
         extra_layout.setSpacing(10)
 
-        self.chk_extra = QCheckBox("启用指定单元格正则表达式格式过滤")
+        self.chk_extra = QCheckBox("启用额外单元格正则表达式过滤 (全部条件需同时满足)")
         self.chk_extra.setChecked(False)
         self.chk_extra.toggled.connect(self._on_extra_toggled)
         extra_layout.addWidget(self.chk_extra)
 
         self.extra_container = QWidget()
-        extra_form = QFormLayout(self.extra_container)
-        extra_form.setContentsMargins(0, 4, 0, 0)
-        extra_form.setSpacing(10)
+        self.extra_rows_layout = QVBoxLayout(self.extra_container)
+        self.extra_rows_layout.setContentsMargins(0, 4, 0, 0)
+        self.extra_rows_layout.setSpacing(8)
 
-        pos_box = QHBoxLayout()
-        self.spin_cond_row = QSpinBox()
-        self.spin_cond_row.setRange(0, 9999)
-        self.spin_cond_row.setPrefix("第 ")
-        self.spin_cond_row.setSuffix(" 行")
-        self.spin_cond_row.valueChanged.connect(self.changed.emit)
+        # Add condition button bar
+        btn_box = QHBoxLayout()
+        self.btn_add_cond = QPushButton("+ 添加额外条件")
+        self.btn_add_cond.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9;
+                border: 1px solid #cbd5e1;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                color: #0284c7;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
+        self.btn_add_cond.clicked.connect(lambda: self.add_condition_row(0, 0, "[0-9]{3,}"))
+        btn_box.addWidget(self.btn_add_cond)
+        btn_box.addStretch()
+        self.extra_rows_layout.addLayout(btn_box)
 
-        self.spin_cond_col = QSpinBox()
-        self.spin_cond_col.setRange(0, 9999)
-        self.spin_cond_col.setPrefix("第 ")
-        self.spin_cond_col.setSuffix(" 列 (0-based)")
-        self.spin_cond_col.valueChanged.connect(self.changed.emit)
-
-        pos_box.addWidget(self.spin_cond_row)
-        pos_box.addWidget(self.spin_cond_col)
-        pos_box.addStretch()
-        extra_form.addRow("目标单元格位置:", pos_box)
-
-        # Regex pattern & live tester
-        regex_box = QHBoxLayout()
-        self.edit_regex = QLineEdit("[0-9]{3,}")
-        self.edit_regex.setPlaceholderText("输入正则表达式，例如: [0-9]{3,}")
-        self.edit_regex.textChanged.connect(self._test_live_regex)
-        self.edit_regex.textChanged.connect(self.changed.emit)
-        regex_box.addWidget(self.edit_regex, 3)
-
-        self.edit_test_input = QLineEdit()
-        self.edit_test_input.setPlaceholderText("实时测试输入字符...")
-        self.edit_test_input.textChanged.connect(self._test_live_regex)
-        regex_box.addWidget(self.edit_test_input, 2)
-
-        self.lbl_regex_result = QLabel("待测试")
-        self.lbl_regex_result.setStyleSheet("color: #64748b; font-weight: bold; min-width: 70px;")
-        regex_box.addWidget(self.lbl_regex_result)
-
-        extra_form.addRow("正则表达式规则:", regex_box)
         extra_layout.addWidget(self.extra_container)
         self.extra_container.setVisible(False)
         layout.addWidget(extra_group)
 
         layout.addStretch()
 
-    def _on_extra_toggled(self, checked: bool):
-        self.extra_container.setVisible(checked)
+    def add_condition_row(self, row: int = 0, col: int = 0, regex: str = "[0-9]{3,}") -> ExtraConditionRowWidget:
+        w = ExtraConditionRowWidget(row=row, col=col, regex=regex, parent=self.extra_container)
+        w.changed.connect(self.changed.emit)
+        w.delete_requested.connect(self.remove_condition_row)
+        self.condition_rows.append(w)
+        insert_idx = max(0, self.extra_rows_layout.count() - 1)
+        self.extra_rows_layout.insertWidget(insert_idx, w)
         self.changed.emit()
+        return w
 
-    def _test_live_regex(self):
-        pattern = self.edit_regex.text().strip()
-        sample = self.edit_test_input.text()
-        if not pattern:
-            self.lbl_regex_result.setText("空正则")
-            self.lbl_regex_result.setStyleSheet("color: #64748b;")
+    def remove_condition_row(self, row_w: ExtraConditionRowWidget):
+        if row_w in self.condition_rows:
+            self.condition_rows.remove(row_w)
+            self.extra_rows_layout.removeWidget(row_w)
+            row_w.deleteLater()
+            if not self.condition_rows:
+                self.chk_extra.setChecked(False)
+                self.extra_container.setVisible(False)
+            self.changed.emit()
+
+    def clear_conditions(self):
+        for w in list(self.condition_rows):
+            self.extra_rows_layout.removeWidget(w)
+            w.deleteLater()
+        self.condition_rows.clear()
+
+    def set_conditions(self, conds: List[ExtraCondition]):
+        self.clear_conditions()
+        if not conds:
+            self.chk_extra.setChecked(False)
+            self.extra_container.setVisible(False)
             return
 
-        try:
-            compiled = re.compile(pattern)
-            if not sample:
-                self.lbl_regex_result.setText("语法正确")
-                self.lbl_regex_result.setStyleSheet("color: #0284c7;")
-            elif compiled.search(sample):
-                self.lbl_regex_result.setText("匹配成功")
-                self.lbl_regex_result.setStyleSheet("color: #16a34a; font-weight: bold;")
-            else:
-                self.lbl_regex_result.setText("不匹配")
-                self.lbl_regex_result.setStyleSheet("color: #ef4444; font-weight: bold;")
-        except re.error:
-            self.lbl_regex_result.setText("正则错误")
-            self.lbl_regex_result.setStyleSheet("color: #dc2626;")
+        for c in conds:
+            self.add_condition_row(c.row, c.col, c.regex)
+
+        self.chk_extra.setChecked(True)
+        self.extra_container.setVisible(True)
+
+    def get_conditions(self) -> List[ExtraCondition]:
+        if not self.chk_extra.isChecked():
+            return []
+        return [w.to_condition() for w in self.condition_rows if w.edit_regex.text().strip()]
+
+    def _on_extra_toggled(self, checked: bool):
+        self.extra_container.setVisible(checked)
+        if checked and not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        self.changed.emit()
+
+    # Compatibility properties for existing tests/code referencing single condition
+    @property
+    def spin_cond_row(self):
+        if not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        return self.condition_rows[0].spin_row
+
+    @property
+    def spin_cond_col(self):
+        if not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        return self.condition_rows[0].spin_col
+
+    @property
+    def edit_regex(self):
+        if not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        return self.condition_rows[0].edit_regex
+
+    @property
+    def edit_test_input(self):
+        if not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        return self.condition_rows[0].edit_test
+
+    @property
+    def lbl_regex_result(self):
+        if not self.condition_rows:
+            self.add_condition_row(0, 0, "[0-9]{3,}")
+        return self.condition_rows[0].lbl_result
 
 
 class WorkflowPipelineTab(QWidget):
@@ -240,6 +387,10 @@ class WorkflowPipelineTab(QWidget):
         btn_add_goto = QPushButton("+ 跳转")
         btn_add_goto.clicked.connect(lambda: self.add_card_by_type("goto"))
         bar_layout.addWidget(btn_add_goto)
+
+        btn_add_exit = QPushButton("+ 退出")
+        btn_add_exit.clicked.connect(lambda: self.add_card_by_type("exit"))
+        bar_layout.addWidget(btn_add_exit)
 
         btn_add_clip = QPushButton("+ 写入剪切板")
         btn_add_clip.clicked.connect(lambda: self.add_card_by_type("write_clipboard"))
@@ -742,18 +893,15 @@ class BlockEditorWidget(QWidget):
             # Load Trigger Tab
             self.trigger_tab.edit_name.setText(rule.name)
             self.trigger_tab.chk_enabled.setChecked(rule.enabled)
+            self.trigger_tab.chk_fuzzy_row.setChecked(rule.fuzzy_row)
+            self.trigger_tab.chk_fuzzy_col.setChecked(rule.fuzzy_col)
+            self.trigger_tab.spin_rows.setEnabled(not rule.fuzzy_row)
+            self.trigger_tab.spin_cols.setEnabled(not rule.fuzzy_col)
             self.trigger_tab.spin_rows.setValue(rule.table_size[0])
             self.trigger_tab.spin_cols.setValue(rule.table_size[1])
 
-            if rule.extra_condition and rule.extra_condition.regex:
-                self.trigger_tab.chk_extra.setChecked(True)
-                self.trigger_tab.extra_container.setVisible(True)
-                self.trigger_tab.spin_cond_row.setValue(rule.extra_condition.row)
-                self.trigger_tab.spin_cond_col.setValue(rule.extra_condition.col)
-                self.trigger_tab.edit_regex.setText(rule.extra_condition.regex)
-            else:
-                self.trigger_tab.chk_extra.setChecked(False)
-                self.trigger_tab.extra_container.setVisible(False)
+            # Load multiple extra conditions
+            self.trigger_tab.set_conditions(rule.extra_conditions)
 
             # Load Pipeline Tab
             self.pipeline_tab.clear_cards()
@@ -766,20 +914,15 @@ class BlockEditorWidget(QWidget):
 
     def to_rule(self) -> RuleConfig:
         """Construct a RuleConfig model from the current editor state."""
-        extra_cond = None
-        if self.trigger_tab.chk_extra.isChecked():
-            extra_cond = ExtraCondition(
-                row=self.trigger_tab.spin_cond_row.value(),
-                col=self.trigger_tab.spin_cond_col.value(),
-                regex=self.trigger_tab.edit_regex.text().strip(),
-            )
-
+        extra_conds = self.trigger_tab.get_conditions()
         workflow = [card.to_config() for card in self.pipeline_tab.cards]
 
         return RuleConfig(
             name=self.trigger_tab.edit_name.text().strip() or "未命名规则",
             table_size=(self.trigger_tab.spin_rows.value(), self.trigger_tab.spin_cols.value()),
-            extra_condition=extra_cond,
+            fuzzy_row=self.trigger_tab.chk_fuzzy_row.isChecked(),
+            fuzzy_col=self.trigger_tab.chk_fuzzy_col.isChecked(),
+            extra_conditions=extra_conds,
             workflow=workflow,
             enabled=self.trigger_tab.chk_enabled.isChecked(),
         )

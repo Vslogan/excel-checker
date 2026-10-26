@@ -12,13 +12,32 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 
-@dataclass
 class TableData:
     """Represents tabular data parsed from clipboard."""
-    raw_text: str
-    grid: List[List[str]] = field(default_factory=list)
-    rows: int = 0
-    cols: int = 0
+
+    def __init__(
+        self,
+        raw_text: Any = "",
+        grid: Optional[List[List[str]]] = None,
+        rows: Optional[int] = None,
+        cols: Optional[int] = None,
+    ):
+        if isinstance(raw_text, (list, tuple)):
+            rows_list = raw_text
+            self.grid = [[str(cell) for cell in row] for row in rows_list]
+            self.rows = len(self.grid)
+            self.cols = max((len(r) for r in self.grid), default=0) if self.rows > 0 else 0
+            for r in self.grid:
+                if len(r) < self.cols:
+                    r.extend([""] * (self.cols - len(r)))
+            self.raw_text = "\n".join("\t".join(r) for r in self.grid)
+        else:
+            self.raw_text = str(raw_text or "")
+            self.grid = list(grid or [])
+            self.rows = rows if rows is not None else len(self.grid)
+            self.cols = cols if cols is not None else (
+                max((len(r) for r in self.grid), default=0) if self.rows > 0 else 0
+            )
 
     @classmethod
     def from_text(cls, text: Optional[str]) -> "TableData":

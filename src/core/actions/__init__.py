@@ -2,6 +2,7 @@
 from src.core.actions.base import ActionRegistry, ActionResult, BaseAction
 from src.core.actions.compute import ComputeAction
 from src.core.actions.condition import ConditionAction
+from src.core.actions.exit import ExitAction
 from src.core.actions.extract_cell import ExtractCellAction
 from src.core.actions.file_ops import FileOpsAction
 from src.core.actions.goto import GotoAction
@@ -67,6 +68,11 @@ ActionRegistry.register(
     "condition",
     ConditionAction,
     aliases=["条件判断", "条件分支", "if", "branch"],
+)
+ActionRegistry.register(
+    "exit",
+    ExitAction,
+    aliases=["退出", "终止", "结束", "terminate", "stop", "abort"],
 )
 
 __all__ = [

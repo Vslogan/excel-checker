@@ -111,6 +111,10 @@ class WorkflowEngine:
         delegate = ui_delegate or HeadlessUIDelegate()
         context = ExecutionContext(table_data=table, initial_vars=initial_vars)
 
+        # Establish system variables 'row' and 'column' representing actual table dimensions
+        context.set_var("row", str(table.rows))
+        context.set_var("column", str(table.cols))
+
         self.log(f"[Engine] Starting workflow for rule: '{rule.name}' with table {table.rows}x{table.cols}")
         delegate.log(f"--- 开始执行规则: 【{rule.name}】 ---")
 
@@ -168,6 +172,12 @@ class WorkflowEngine:
                         error=err_msg,
                         aborted_step=step_num,
                     )
+
+                # Check if this action requested an immediate clean exit (ExitAction)
+                if res.is_exit:
+                    self.log(f"[Engine] Step {step_num} ({act_name}) requested exit. Workflow completed cleanly.")
+                    delegate.log(f"--- 步骤 {step_num} ({act_name}) 触发退出，流程正常结束 ---")
+                    break
 
                 # Register active if scope for multi-level nesting
                 if res.branch_info:
