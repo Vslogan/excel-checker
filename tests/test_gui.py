@@ -194,19 +194,36 @@ def test_drag_handle_and_pipeline_drag_interactions(qapp):
     from PyQt5.QtCore import QPoint, Qt
 
     pipe = WorkflowPipelineTab()
+    pipe.show()
     c1 = ComputeCard({"target_var": "v1", "expression": "1"})
     c2 = ComputeCard({"target_var": "v2", "expression": "2"})
     pipe.add_card(c1)
     pipe.add_card(c2)
+    qapp.processEvents()
 
     # Both cards have drag handle SVG
     assert c1.btn_drag is not None
     assert c2.btn_drag is not None
 
     # Test drag initiate
-    press_event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    press_event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(10, 10), QPoint(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     pipe._on_card_drag_initiated(c1, press_event)
     assert pipe._dragging_card == c1
+
+    # Test drag moved into reorder zone (exercises line 374 with QPoint calculation!)
+    move_event = QMouseEvent(QMouseEvent.MouseMove, QPoint(150, 80), QPoint(150, 80), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    pipe._on_card_drag_moved(c1, move_event)
+    assert pipe._is_dragging is True
+    assert pipe._drop_index >= 0
+
+    # Test drag moved into left delete zone
+    del_event = QMouseEvent(QMouseEvent.MouseMove, QPoint(5, 80), QPoint(5, 80), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    pipe._on_card_drag_moved(c1, del_event)
+    assert pipe._in_delete_zone is True
+
+    # Test release
+    release_event = QMouseEvent(QMouseEvent.MouseButtonRelease, QPoint(10, 80), QPoint(10, 80), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    pipe._on_card_drag_released(c1, release_event)
 
     # Clean up drag
     pipe._cleanup_drag()

@@ -1,7 +1,7 @@
 """Floating Toast Notification Window and Manager."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from PyQt5.QtCore import QPoint, QPropertyAnimation, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QCursor, QGuiApplication, QScreen

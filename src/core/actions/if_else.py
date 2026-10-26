@@ -79,7 +79,7 @@ class IfElseAction(BaseAction):
                 skip_after = (at_step, skip_to)
 
             return ActionResult.ok(
-                output=f"条件成立，执行 IF 分支",
+                output="条件成立，执行 IF 分支",
                 jump_to=None,
                 skip_after=skip_after,
             )

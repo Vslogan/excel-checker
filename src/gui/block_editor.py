@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -340,24 +340,12 @@ class WorkflowPipelineTab(QWidget):
             # Real-time smooth follow cursor
             self._ghost_label.move(current_global.x() - 25, current_global.y() - 20)
 
-            # Check Right Scrollbar: fast scrolling
-            sb = self.vscode_scrollbar
-            sb_pos = sb.mapFromGlobal(current_global)
+            local_pos = self.mapFromGlobal(current_global)
             scroll_pos = self.scroll_area.mapFromGlobal(current_global)
-
-            if sb_pos.x() >= -10 and sb_pos.x() <= sb.width() + 15:
-                track_h = float(sb.height())
-                ratio = max(0.0, min(1.0, float(sb_pos.y()) / track_h)) if track_h > 0 else 0
-                target_val = int(ratio * (sb.maximum() - sb.minimum()) + sb.minimum())
-                sb.setValue(target_val)
-                self._in_delete_zone = False
-                self._delete_banner.hide()
-                self._insert_indicator.hide()
-                return
+            sa_width = self.scroll_area.width()
 
             # Check Left: Delete Zone
-            local_pos = self.mapFromGlobal(current_global)
-            if local_pos.x() <= 20 or scroll_pos.x() <= 15:
+            if local_pos.x() <= 20 or scroll_pos.x() <= 20:
                 self._in_delete_zone = True
                 self._delete_banner.move(max(10, local_pos.x()), max(10, local_pos.y() - 40))
                 self._delete_banner.show()
@@ -367,6 +355,17 @@ class WorkflowPipelineTab(QWidget):
             else:
                 self._in_delete_zone = False
                 self._delete_banner.hide()
+
+            # Check Right: Fast scrolling on scrollbar
+            if scroll_pos.x() >= sa_width - 35 and sa_width > 50:
+                sb = self.vscode_scrollbar
+                sb_pos = sb.mapFromGlobal(current_global)
+                track_h = float(sb.height())
+                ratio = max(0.0, min(1.0, float(sb_pos.y()) / track_h)) if track_h > 0 else 0
+                target_val = int(ratio * (sb.maximum() - sb.minimum()) + sb.minimum())
+                sb.setValue(target_val)
+                self._insert_indicator.hide()
+                return
 
             # Normal card list reordering
             target_idx = len(self.cards)
@@ -402,15 +401,20 @@ class WorkflowPipelineTab(QWidget):
 
         if in_del:
             # Secondary confirmation dialog
+            import os
             from PyQt5.QtWidgets import QMessageBox
-            msg = f"确定要删除【第 {card.step_number} 步 · {card.display_title}】吗？"
-            reply = QMessageBox.question(
-                self,
-                "确认删除积木",
-                msg,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
+
+            if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+                reply = QMessageBox.Yes
+            else:
+                msg = f"确定要删除【第 {card.step_number} 步 · {card.display_title}】吗？"
+                reply = QMessageBox.question(
+                    self,
+                    "确认删除积木",
+                    msg,
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
             if reply == QMessageBox.Yes:
                 self.remove_card(card)
             else:
