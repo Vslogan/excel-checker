@@ -293,3 +293,101 @@ def test_simulator_widget_run(qapp):
 
     assert "流程全部执行成功" in sim.lbl_match_status.text()
     assert "999\tOK" in sim.clipboard_output.toPlainText()
+
+
+def test_requirements_gui_enhancements(qapp):
+    """Test GUI enhancements: toolbar labels, Goto jump & marker, scrollbar drag highlight, no else checkbox, nested indentation."""
+    from PyQt5.QtWidgets import QPushButton
+    from src.gui.action_cards import GotoCard, IfElseCard, ComputeCard, GotoTargetMarkerWidget
+
+    editor = BlockEditorWidget()
+    pipe = editor.pipeline_tab
+
+    # 1. Requirement 2: Clean toolbar button labels without (if/else) or (goto)
+    buttons = pipe.findChildren(QPushButton)
+    btn_texts = [b.text() for b in buttons]
+    assert "+ 如果" in btn_texts
+    assert "+ 跳转" in btn_texts
+    assert not any("(if/else)" in t for t in btn_texts)
+    assert not any("(goto)" in t for t in btn_texts)
+
+    # 2. Requirement 6: No "包含else分支" checkbox; spin_else_count defaults to 0 and is enabled
+    if_card = IfElseCard()
+    assert not hasattr(if_card, "chk_has_else")
+    assert if_card.spin_else_count.isEnabled() is True
+    assert if_card.spin_else_count.value() == 0
+    assert if_card.spin_then_count.value() == 1
+    cfg_if = if_card.to_config()
+    assert cfg_if["else_count"] == 0
+    assert cfg_if["has_else"] is False
+
+    # 3. Requirement 4: GotoCard has "跳转" button and emits jump_requested
+    goto_card = GotoCard()
+    assert hasattr(goto_card, "btn_jump")
+    assert goto_card.btn_jump.text() == "跳转"
+    goto_card.spin_target.setValue(2)
+
+    received_jump_target = []
+    goto_card.jump_requested.connect(lambda t: received_jump_target.append(t))
+    goto_card.btn_jump.click()
+    assert received_jump_target == [2]
+
+    # 4. Requirement 4: GotoTargetMarkerWidget placed at target step and navigates to source Goto
+    pipe.clear_cards()
+    card_compute1 = ComputeCard({"target_var": "a", "expression": "1"})
+    card_goto = GotoCard({"condition": "1", "target_line": 1}) # jumps to step 1
+    pipe.add_card(card_compute1)
+    pipe.add_card(card_goto)
+
+    # There should now be a GotoTargetMarkerWidget inserted before step 1
+    markers = [w for w in pipe._marker_widgets if isinstance(w, GotoTargetMarkerWidget)]
+    assert len(markers) == 1
+    assert markers[0].target_step == 1
+    assert 2 in markers[0].from_steps
+
+    # Clicking the marker emits jump_to_source_requested(2)
+    marker_source_clicked = []
+    markers[0].jump_to_source_requested.connect(lambda s: marker_source_clicked.append(s))
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtCore import QPoint
+    click_ev = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    markers[0].mousePressEvent(click_ev)
+    assert marker_source_clicked == [2]
+
+    # Test scroll_to_step
+    pipe.scroll_to_step(2)
+
+    # 5. Requirement 5: Scrollbar highlights dragged card
+    sb = pipe.vscode_scrollbar
+    assert sb._dragged_idx is None
+    sb.set_dragged_card_index(0)
+    assert sb._dragged_idx == 0
+    sb.set_dragged_card_index(None)
+    assert sb._dragged_idx is None
+
+    # 6. Requirement 3: Multi-level nested Scratch-style indentation
+    pipe.clear_cards()
+    # Step 1: Outer if (then_count=3, else_count=1)
+    pipe.add_card(IfElseCard({"condition": "1", "then_count": 3, "else_count": 1}))
+    # Step 2: Inner if inside outer then (then_count=1, else_count=1)
+    pipe.add_card(IfElseCard({"condition": "1", "then_count": 1, "else_count": 1}))
+    # Step 3: Compute inside inner then (level 2)
+    pipe.add_card(ComputeCard({"target_var": "x", "expression": "10"}))
+    # Step 4: Compute inside inner else (level 2)
+    pipe.add_card(ComputeCard({"target_var": "y", "expression": "20"}))
+    # Step 5: Compute inside outer else (level 1)
+    pipe.add_card(ComputeCard({"target_var": "z", "expression": "30"}))
+    # Step 6: Compute at root level (level 0)
+    pipe.add_card(ComputeCard({"target_var": "w", "expression": "40"}))
+
+    assert pipe.cards[0]._indent_level == 0
+    assert pipe.cards[1]._indent_level == 1
+    assert pipe.cards[1]._branch_type == "if"
+    assert pipe.cards[2]._indent_level == 2
+    assert pipe.cards[2]._branch_type == "if"
+    assert pipe.cards[3]._indent_level == 2
+    assert pipe.cards[3]._branch_type == "else"
+    assert pipe.cards[4]._indent_level == 1
+    assert pipe.cards[4]._branch_type == "else"
+    assert pipe.cards[5]._indent_level == 0
+

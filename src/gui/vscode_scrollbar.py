@@ -38,6 +38,7 @@ class VSCodeScrollBar(QScrollBar):
         self._dragging: bool = False
         self._is_hovered: bool = False
         self._hovered_idx: Optional[int] = None
+        self._dragged_idx: Optional[int] = None
         self._drag_offset_y: float = 0.0
 
         # Minimal stylesheet to prevent OS native clunky buttons and margins
@@ -63,6 +64,12 @@ class VSCodeScrollBar(QScrollBar):
 
         # Tooltip default
         self.setToolTip("VS Code 风格概览滚动条 (点击跳转 / 拖拽滚动)")
+
+    def set_dragged_card_index(self, idx: Optional[int]):
+        """Highlight the currently dragged card on the overview scrollbar."""
+        if self._dragged_idx != idx:
+            self._dragged_idx = idx
+            self.update()
 
     # --- Geometry Calculation Helpers ---
 
@@ -225,6 +232,24 @@ class VSCodeScrollBar(QScrollBar):
             painter.setPen(glow_pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(hovered_m["rect"].adjusted(-1, -1, 1, 1), 4.5, 4.5)
+
+        # 7. Layer E: Highlight Currently Dragged Card
+        if self._dragged_idx is not None and 0 <= self._dragged_idx < len(markers):
+            dragged_m = markers[self._dragged_idx]
+            d_rect = dragged_m["rect"].adjusted(-2, -2, 2, 2)
+            # Glowing dashed amber border
+            drag_pen = QPen(QColor(245, 158, 11, 255), 2.0, Qt.DashLine)
+            painter.setPen(drag_pen)
+            painter.setBrush(QBrush(QColor(254, 243, 199, 140)))
+            painter.drawRoundedRect(d_rect, 4.5, 4.5)
+
+            # Accent drag dot on the right edge
+            dot_size = min(6.0, d_rect.height() - 2.0)
+            if dot_size >= 3.0:
+                dot_rect = QRectF(d_rect.right() - dot_size - 1.0, d_rect.center().y() - dot_size / 2.0, dot_size, dot_size)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(239, 68, 68, 255)))
+                painter.drawEllipse(dot_rect)
 
         painter.end()
 

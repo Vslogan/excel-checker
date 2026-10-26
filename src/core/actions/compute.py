@@ -6,7 +6,7 @@ Evaluates complex right-value expressions and stores the result into a left-valu
 from typing import Any, Dict
 from src.core.actions.base import ActionResult, BaseAction
 from src.core.context import ExecutionContext, UIDelegate
-from src.core.expression import evaluate_expression, ExpressionError
+from src.core.expression import evaluate_expression, ExpressionError, validate_variable_name
 
 
 class ComputeAction(BaseAction):
@@ -43,10 +43,14 @@ class ComputeAction(BaseAction):
     def execute(self, context: ExecutionContext, ui_delegate: UIDelegate) -> ActionResult:
         if not self.target_var or not self.target_var.strip():
             return ActionResult(success=False, error="计算积木未指定左值变量名")
+        var_name = self.target_var.strip()
+        if not validate_variable_name(var_name):
+            return ActionResult(
+                success=False,
+                error=f"左值变量名 '{var_name}' 不合法: 必须以下划线或字母开头，只能包含字母、数字和下划线",
+            )
         if not self.expression or not self.expression.strip():
             return ActionResult(success=False, error="计算积木未指定右值表达式")
-
-        var_name = self.target_var.strip()
         try:
             # Pass all context variables to expression evaluator
             result_str = evaluate_expression(self.expression, context.variables)

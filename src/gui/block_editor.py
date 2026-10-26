@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from PyQt5.QtCore import QPoint, Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -28,9 +28,13 @@ from PyQt5.QtWidgets import (
 from src.core.config_model import ExtraCondition, RuleConfig
 from src.gui.action_cards import (
     BaseActionCard,
+    ComputeCard,
     ExtractCellCard,
     FileOpsCard,
+    GotoCard,
+    GotoTargetMarkerWidget,
     HttpRequestCard,
+    IfElseCard,
     ShowMessageCard,
     UserInputCard,
     WriteClipboardCard,
@@ -188,6 +192,7 @@ class WorkflowPipelineTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.cards: List[BaseActionCard] = []
+        self._marker_widgets: List[GotoTargetMarkerWidget] = []
         self.setup_ui()
 
     def setup_ui(self):
@@ -228,11 +233,11 @@ class WorkflowPipelineTab(QWidget):
         btn_add_compute.clicked.connect(lambda: self.add_card_by_type("compute"))
         bar_layout.addWidget(btn_add_compute)
 
-        btn_add_if = QPushButton("+ 如果 (if/else)")
+        btn_add_if = QPushButton("+ 如果")
         btn_add_if.clicked.connect(lambda: self.add_card_by_type("if_else"))
         bar_layout.addWidget(btn_add_if)
 
-        btn_add_goto = QPushButton("+ 跳转 (goto)")
+        btn_add_goto = QPushButton("+ 跳转")
         btn_add_goto.clicked.connect(lambda: self.add_card_by_type("goto"))
         bar_layout.addWidget(btn_add_goto)
 
@@ -324,6 +329,8 @@ class WorkflowPipelineTab(QWidget):
             # Check 8px threshold for anti-jitter
             if (current_global - self._drag_start_global).manhattanLength() >= 8:
                 self._is_dragging = True
+                if card in self.cards and hasattr(self, "vscode_scrollbar"):
+                    self.vscode_scrollbar.set_dragged_card_index(self.cards.index(card))
                 pix = card.grab()
                 if not self._ghost_label:
                     self._ghost_label = QLabel(None)
@@ -443,6 +450,8 @@ class WorkflowPipelineTab(QWidget):
         self._delete_banner.hide()
         self._dragging_card = None
         self._is_dragging = False
+        if hasattr(self, "vscode_scrollbar"):
+            self.vscode_scrollbar.set_dragged_card_index(None)
         self._in_delete_zone = False
         self._drop_index = -1
 
@@ -461,6 +470,9 @@ class WorkflowPipelineTab(QWidget):
         card.drag_initiated.connect(self._on_card_drag_initiated)
         card.drag_moved.connect(self._on_card_drag_moved)
         card.drag_released.connect(self._on_card_drag_released)
+
+        if hasattr(card, "jump_requested"):
+            card.jump_requested.connect(self.scroll_to_step)
 
         self.cards.append(card)
         self.cards_layout.insertWidget(len(self.cards) - 1, card)
@@ -502,48 +514,100 @@ class WorkflowPipelineTab(QWidget):
         new_card.move_up_requested.connect(self.move_card_up)
         new_card.move_down_requested.connect(self.move_card_down)
         new_card.clone_requested.connect(self.clone_card)
+        new_card.drag_initiated.connect(self._on_card_drag_initiated)
+        new_card.drag_moved.connect(self._on_card_drag_moved)
+        new_card.drag_released.connect(self._on_card_drag_released)
+        if hasattr(new_card, "jump_requested"):
+            new_card.jump_requested.connect(self.scroll_to_step)
 
         self.cards.insert(idx + 1, new_card)
         self.cards_layout.insertWidget(idx + 1, new_card)
         self._renumber_steps()
         self.changed.emit()
 
+    def scroll_to_step(self, step_num: int):
+        """Scroll view to the target step and highlight with a subtle flash effect."""
+        if 1 <= step_num <= len(self.cards):
+            target_card = self.cards[step_num - 1]
+            self.scroll_area.ensureWidgetVisible(target_card, 0, 40)
+            self._flash_card(target_card)
+
+    def _flash_card(self, card: BaseActionCard):
+        """Briefly flash a card to confirm navigation target."""
+        card.setStyleSheet(f"""
+            QFrame#{card.objectName()} {{
+                background-color: #f0fdf4;
+                border: 2px solid #16a34a !important;
+                border-radius: 8px;
+                padding: 4px;
+            }}
+        """)
+        QTimer.singleShot(750, lambda: card.set_indent_level(card._indent_level, card._branch_type))
+
     def _renumber_steps(self):
-        # Determine branching indentation for Scratch-style display
-        branch_mapping = {}  # index -> (level, branch_type)
-        i = 0
-        while i < len(self.cards):
-            card = self.cards[i]
+        # 1. Multi-level nested branching indentation calculation
+        n = len(self.cards)
+        levels = [0] * n
+        branch_types = [None] * n
+
+        for i, card in enumerate(self.cards):
             if getattr(card, "action_type", "") == "if_else":
                 then_cnt = getattr(card, "spin_then_count", None)
                 then_val = then_cnt.value() if then_cnt else getattr(card, "then_count", 1)
-                has_else = getattr(card, "chk_has_else", None)
-                else_flag = has_else.isChecked() if has_else else getattr(card, "has_else", False)
                 else_cnt = getattr(card, "spin_else_count", None)
                 else_val = else_cnt.value() if else_cnt else getattr(card, "else_count", 0)
 
-                for k in range(1, then_val + 1):
-                    if i + k < len(self.cards):
-                        branch_mapping[i + k] = (1, "if")
-                if else_flag and else_val > 0:
+                # IF branch
+                for k in range(i + 1, min(n, i + 1 + then_val)):
+                    levels[k] += 1
+                    branch_types[k] = "if"
+
+                # ELSE branch (if else_val > 0)
+                if else_val > 0:
                     start_else = i + 1 + then_val
-                    for k in range(else_val):
-                        if start_else + k < len(self.cards):
-                            branch_mapping[start_else + k] = (1, "else")
-            i += 1
+                    for k in range(start_else, min(n, start_else + else_val)):
+                        levels[k] += 1
+                        branch_types[k] = "else"
 
         for i, card in enumerate(self.cards):
             card.set_step_number(i + 1)
-            level, branch_type = branch_mapping.get(i, (0, None))
-            card.set_indent_level(level, branch_type)
+            card.set_indent_level(levels[i], branch_types[i])
             card.btn_up.setEnabled(i > 0)
             card.btn_down.setEnabled(i < len(self.cards) - 1)
+
+        # 2. Re-create GotoTargetMarkerWidget placeholders at target steps
+        for marker in self._marker_widgets:
+            self.cards_layout.removeWidget(marker)
+            marker.deleteLater()
+        self._marker_widgets.clear()
+
+        goto_targets: Dict[int, List[int]] = {}
+        for i, card in enumerate(self.cards):
+            if getattr(card, "action_type", "") == "goto":
+                target_spin = getattr(card, "spin_target", None)
+                target_step = target_spin.value() if target_spin else getattr(card, "target_line", 1)
+                if 1 <= target_step <= len(self.cards):
+                    goto_targets.setdefault(target_step, []).append(i + 1)
+
+        for target_step, from_steps in sorted(goto_targets.items()):
+            target_card = self.cards[target_step - 1]
+            marker = GotoTargetMarkerWidget(target_step=target_step, from_steps=from_steps)
+            marker.jump_to_source_requested.connect(self.scroll_to_step)
+            idx_in_layout = self.cards_layout.indexOf(target_card)
+            if idx_in_layout >= 0:
+                self.cards_layout.insertWidget(idx_in_layout, marker)
+                self._marker_widgets.append(marker)
 
         self.lbl_step_count.setText(f"当前共 {len(self.cards)} 个步骤")
         if hasattr(self, "vscode_scrollbar"):
             self.vscode_scrollbar.update()
 
     def clear_cards(self):
+        for marker in self._marker_widgets:
+            self.cards_layout.removeWidget(marker)
+            marker.deleteLater()
+        self._marker_widgets.clear()
+
         for card in list(self.cards):
             self.cards_layout.removeWidget(card)
             card.deleteLater()

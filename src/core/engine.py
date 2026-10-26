@@ -119,6 +119,16 @@ class WorkflowEngine:
         pc = 0
         execution_count = 0
         max_executions = 10000  # safeguard against infinite loops
+
+        @dataclass
+        class IfScope:
+            step: int
+            then_end: int
+            else_end: int
+            exit_step: int
+            branch: str  # "then" or "else"
+
+        if_scopes: List[IfScope] = []
         pending_skips: Dict[int, int] = {}  # at_step -> skip_to_step
 
         while pc < len(rule.workflow):
@@ -159,7 +169,22 @@ class WorkflowEngine:
                         aborted_step=step_num,
                     )
 
-                # Register any skip_after from IfElseAction
+                # Register active if scope for multi-level nesting
+                if res.branch_info:
+                    b_info = res.branch_info
+                    b_step = b_info["step"]
+                    t_cnt = b_info["then_count"]
+                    e_cnt = b_info["else_count"]
+                    b_type = b_info["branch"]
+                    if_scopes.append(IfScope(
+                        step=b_step,
+                        then_end=b_step + t_cnt,
+                        else_end=b_step + t_cnt + e_cnt if e_cnt > 0 else b_step + t_cnt,
+                        exit_step=b_step + 1 + t_cnt + e_cnt,
+                        branch=b_type,
+                    ))
+
+                # Register any skip_after for backwards compatibility
                 if res.skip_after:
                     at_s, skip_s = res.skip_after
                     pending_skips[at_s] = skip_s
@@ -171,15 +196,36 @@ class WorkflowEngine:
                         # Jump past the end of workflow -> finishes workflow
                         break
                     pc = target_step - 1
+                    # Filter active scopes to only those that still enclose the target step
+                    if_scopes = [
+                        s for s in if_scopes
+                        if (s.branch == "then" and s.step < target_step <= s.then_end)
+                        or (s.branch == "else" and s.then_end < target_step <= s.else_end)
+                    ]
                 else:
-                    # Normal sequential advance
+                    # Normal sequential advance with nested scope unwinding
+                    next_s = step_num + 1
+                    while if_scopes:
+                        top = if_scopes[-1]
+                        if top.branch == "then" and step_num == top.then_end:
+                            if_scopes.pop()
+                            next_s = top.exit_step
+                            step_num = next_s - 1
+                            continue
+                        elif top.branch == "else" and step_num == top.else_end:
+                            if_scopes.pop()
+                            next_s = top.exit_step
+                            step_num = next_s - 1
+                            continue
+                        break
+
                     if step_num in pending_skips:
-                        next_step = pending_skips.pop(step_num)
-                        if next_step > len(rule.workflow):
-                            break
-                        pc = next_step - 1
-                    else:
-                        pc += 1
+                        legacy_skip = pending_skips.pop(step_num)
+                        next_s = max(next_s, legacy_skip)
+
+                    if next_s > len(rule.workflow):
+                        break
+                    pc = next_s - 1
 
             except Exception as e:
                 err_msg = f"步骤 {step_num} ({act_name}) 发生未捕获异常: {str(e)}"

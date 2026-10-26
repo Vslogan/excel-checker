@@ -241,7 +241,8 @@ class BaseActionCard(QFrame):
 
         if level > 0 and branch_type == "if":
             margin_left = 28 * level
-            self.badge_branch.setText(" IF 分支 ")
+            badge_text = f" IF 分支 (层级 {level}) " if level > 1 else " IF 分支 "
+            self.badge_branch.setText(badge_text)
             self.badge_branch.setStyleSheet("background-color: #fef3c7; color: #b45309; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; margin-left: 6px;")
             self.badge_branch.setVisible(True)
             self.setStyleSheet(f"""
@@ -256,7 +257,8 @@ class BaseActionCard(QFrame):
             """)
         elif level > 0 and branch_type == "else":
             margin_left = 28 * level
-            self.badge_branch.setText(" ELSE 分支 ")
+            badge_text = f" ELSE 分支 (层级 {level}) " if level > 1 else " ELSE 分支 "
+            self.badge_branch.setText(badge_text)
             self.badge_branch.setStyleSheet("background-color: #ffedd5; color: #c2410c; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; margin-left: 6px;")
             self.badge_branch.setVisible(True)
             self.setStyleSheet(f"""
@@ -768,6 +770,63 @@ class ComputeCard(BaseActionCard):
         }
 
 
+class GotoTargetMarkerWidget(QFrame):
+    """
+    Compact placeholder widget placed directly above a step targeted by one or more Goto blocks.
+    Non-counting (does not increment pipeline step count).
+    Displays which Goto steps jump here and navigates to the source Goto when clicked.
+    """
+    jump_to_source_requested = pyqtSignal(int)
+
+    def __init__(self, target_step: int, from_steps: list[int], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.target_step = target_step
+        self.from_steps = list(from_steps)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setObjectName(f"GotoMarker_{target_step}")
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.setFixedHeight(28)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #fef2f2;
+                border: 1px dashed #f87171;
+                border-radius: 6px;
+                padding: 1px 8px;
+            }
+            QFrame:hover {
+                background-color: #fee2e2;
+                border: 1px solid #ef4444;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(6)
+
+        icon_label = QLabel("⚑")
+        icon_label.setStyleSheet("color: #dc2626; font-weight: bold; font-size: 13px;")
+        layout.addWidget(icon_label)
+
+        steps_str = ", ".join(f"第 {s} 步" for s in self.from_steps)
+        text_label = QLabel(f"跳转目标点: {steps_str} 的 Goto 将跳转至此 (点击直达对应 Goto)")
+        text_label.setStyleSheet("color: #b91c1c; font-size: 11px; font-weight: 500;")
+        layout.addWidget(text_label)
+
+        layout.addStretch()
+
+        hint_label = QLabel("直达 ↗")
+        hint_label.setStyleSheet("color: #dc2626; font-size: 11px; font-weight: bold;")
+        layout.addWidget(hint_label)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.from_steps:
+            # Emit first source step
+            self.jump_to_source_requested.emit(self.from_steps[0])
+        super().mousePressEvent(event)
+
+
 class IfElseCard(BaseActionCard):
     """Card for If-Else conditional branch with Scratch-like wrapping."""
     action_type = "if_else"
@@ -779,8 +838,9 @@ class IfElseCard(BaseActionCard):
             "<b>如果 (If-Else 条件分支)</b><br/>"
             "输入条件表达式进行逻辑选择：<br/>"
             "• 若计算结果非零 (True)，依次执行 IF 分支内积木，完成后自动跳过 ELSE 分支。<br/>"
-            "• 若计算结果为 0 (False)，跳过 IF 分支，或进入 ELSE 分支（若开启）。<br/>"
-            "• 支持在分支内使用 Goto 实现灵活循环与跳转。"
+            "• 若计算结果为 0 (False)，跳过 IF 分支，或进入 ELSE 分支（当 ELSE 积木数大于 0）。<br/>"
+            "• ELSE 积木数默认为 0，语义上即为不包含 ELSE 分支。<br/>"
+            "• 支持多层任意嵌套与 Scratch 级联缩进。"
         )
         self.btn_tip.setToolTip(tip)
 
@@ -789,12 +849,7 @@ class IfElseCard(BaseActionCard):
         self.edit_condition.textChanged.connect(self._update_summary)
         self.form_layout.addRow("IF 条件表达式:", self.edit_condition)
 
-        # Has else checkbox
-        self.chk_has_else = QCheckBox("包含 ELSE 分支 (否则)")
-        self.chk_has_else.toggled.connect(self._on_else_toggled)
-        self.form_layout.addRow("分支选项:", self.chk_has_else)
-
-        # Spinners layout
+        # Spinners layout (both IF and ELSE count always available; ELSE count=0 means no else)
         counts_layout = QHBoxLayout()
         counts_layout.addWidget(QLabel("IF 包含积木数:"))
         self.spin_then_count = QSpinBox()
@@ -807,8 +862,7 @@ class IfElseCard(BaseActionCard):
         counts_layout.addWidget(self.lbl_else_count)
         self.spin_else_count = QSpinBox()
         self.spin_else_count.setRange(0, 99)
-        self.spin_else_count.setValue(1)
-        self.spin_else_count.setEnabled(False)
+        self.spin_else_count.setValue(0)
         self.spin_else_count.valueChanged.connect(self._update_summary)
         counts_layout.addWidget(self.spin_else_count)
 
@@ -822,33 +876,22 @@ class IfElseCard(BaseActionCard):
 
         self._update_summary()
 
-    def _on_else_toggled(self, checked: bool):
-        self.spin_else_count.setEnabled(checked)
-        self._update_summary()
-
     def _update_summary(self):
         then_cnt = self.spin_then_count.value()
-        has_else = self.chk_has_else.isChecked()
-        else_cnt = self.spin_else_count.value() if has_else else 0
+        else_cnt = self.spin_else_count.value()
         cond = self.edit_condition.text().strip() or "条件"
 
-        if has_else:
+        if else_cnt > 0:
             text = f"结构: 如果 [{cond}] 成立 → 执行紧随其后的 {then_cnt} 个积木；否则 → 执行再之后的 {else_cnt} 个积木"
         else:
-            text = f"结构: 如果 [{cond}] 成立 → 执行紧随其后的 {then_cnt} 个积木；否则 → 直接跳过继续向下执行"
+            text = f"结构: 如果 [{cond}] 成立 → 执行紧随其后的 {then_cnt} 个积木；否则 → 直接跳过继续向下执行 (ELSE 行数为 0)"
         self.lbl_summary.setText(text)
         self.changed.emit()
 
     def load_config(self, config: Dict[str, Any]):
         cond = config.get("condition") or config.get("cond") or config.get("if条件") or config.get("条件") or ""
         self.edit_condition.setText(str(cond))
-        has_else = bool(
-            config.get("has_else", False)
-            or config.get("else", False)
-            or config.get("包含else", False)
-            or config.get("是否有else", False)
-        )
-        self.chk_has_else.setChecked(has_else)
+
         then_cnt = int(
             config.get("then_count")
             or config.get("if_count")
@@ -857,12 +900,20 @@ class IfElseCard(BaseActionCard):
             or 1
         )
         self.spin_then_count.setValue(then_cnt)
-        else_cnt = int(
+
+        # else_count defaults to 0
+        raw_else = (
             config.get("else_count")
             or config.get("else下面有多少个积木")
             or config.get("else积木数")
-            or 1
         )
+        if raw_else is not None:
+            else_cnt = int(raw_else)
+        else:
+            # Fallback for old configs that had has_else=True
+            has_else = bool(config.get("has_else", False) or config.get("else", False))
+            else_cnt = 1 if has_else else 0
+
         self.spin_else_count.setValue(else_cnt)
         self._update_summary()
 
@@ -870,9 +921,9 @@ class IfElseCard(BaseActionCard):
         return {
             "action": "if_else",
             "condition": self.edit_condition.text().strip(),
-            "has_else": self.chk_has_else.isChecked(),
             "then_count": self.spin_then_count.value(),
-            "else_count": self.spin_else_count.value() if self.chk_has_else.isChecked() else 0,
+            "else_count": self.spin_else_count.value(),
+            "has_else": self.spin_else_count.value() > 0,
         }
 
 
@@ -882,13 +933,16 @@ class GotoCard(BaseActionCard):
     display_title = "跳转 (Goto / Loop Jump)"
     color_border = "#ef4444"
 
+    jump_requested = pyqtSignal(int)
+
     def setup_ui(self):
         tip = (
             "<b>跳转 (Goto)</b><br/>"
             "流程控制与循环跳转：<br/>"
             "• <b>跳转条件</b>: 表达式计算结果非零时执行跳转；为 0 时跳过并顺序执行下一步。<br/>"
             "• 默认填 '1' 即为无条件强制跳转。<br/>"
-            "• <b>目标行号</b>: 步骤编号 (从 1 开始计数)，支持向前跳转形成循环，或向后跳转跳过特定步骤。"
+            "• <b>目标行号</b>: 步骤编号 (从 1 开始计数)，支持向前跳转形成循环，或向后跳转跳过特定步骤。<br/>"
+            "• 点击【跳转】按钮可快速定位并高亮目标步骤。"
         )
         self.btn_tip.setToolTip(tip)
 
@@ -898,11 +952,37 @@ class GotoCard(BaseActionCard):
         self.edit_condition.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("跳转条件 (非零跳转):", self.edit_condition)
 
+        target_row = QHBoxLayout()
         self.spin_target = QSpinBox()
         self.spin_target.setRange(1, 9999)
         self.spin_target.setValue(1)
         self.spin_target.valueChanged.connect(self.changed.emit)
-        self.form_layout.addRow("目标行号 (Step):", self.spin_target)
+        target_row.addWidget(self.spin_target)
+
+        self.btn_jump = QPushButton("跳转")
+        self.btn_jump.setToolTip("快速滚动至目标步骤积木并高亮")
+        self.btn_jump.setStyleSheet("""
+            QPushButton {
+                background: #fee2e2;
+                color: #dc2626;
+                border: 1px solid #fca5a5;
+                border-radius: 4px;
+                padding: 3px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #fecaca;
+            }
+            QPushButton:pressed {
+                background: #fca5a5;
+            }
+        """)
+        self.btn_jump.clicked.connect(lambda: self.jump_requested.emit(self.spin_target.value()))
+        target_row.addWidget(self.btn_jump)
+        target_row.addStretch()
+
+        self.form_layout.addRow("目标行号 (Step):", target_row)
 
     def load_config(self, config: Dict[str, Any]):
         c = (

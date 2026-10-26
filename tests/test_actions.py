@@ -344,3 +344,112 @@ def test_turing_completeness_loop_and_goto_in_if():
     assert res.variables["n"] == "1"
     assert res.variables["done"] == "1"
 
+
+def test_ternary_operator_comprehensive():
+    """Requirement 1: Comprehensive unit tests for C-style ternary operator in expressions."""
+    from src.core.expression import evaluate_expression
+
+    # 1. Basic ternary evaluation
+    assert evaluate_expression("1 ? 'YES' : 'NO'") == "YES"
+    assert evaluate_expression("0 ? 'YES' : 'NO'") == "NO"
+    assert evaluate_expression("5 > 2 ? 100 : 200") == "100"
+    assert evaluate_expression("5 < 2 ? 100 : 200") == "200"
+
+    # 2. Nested ternary in condition
+    assert evaluate_expression("(2 > 1 ? 1 : 0) ? 'CondTrue' : 'CondFalse'") == "CondTrue"
+    assert evaluate_expression("(2 < 1 ? 1 : 0) ? 'CondTrue' : 'CondFalse'") == "CondFalse"
+
+    # 3. Nested ternary in true branch
+    assert evaluate_expression("1 ? (1 ? 'InnerT' : 'InnerF') : 'OuterF'") == "InnerT"
+    assert evaluate_expression("1 ? (0 ? 'InnerT' : 'InnerF') : 'OuterF'") == "InnerF"
+
+    # 4. Nested ternary in false branch
+    assert evaluate_expression("0 ? 'OuterT' : (1 ? 'InnerT' : 'InnerF')") == "InnerT"
+    assert evaluate_expression("0 ? 'OuterT' : (0 ? 'InnerT' : 'InnerF')") == "InnerF"
+
+    # 5. Right-associative chaining without parentheses: a ? 1 : b ? 2 : 3
+    # When a=0, b=1 -> evaluates to 2
+    assert evaluate_expression("0 ? 1 : 1 ? 2 : 3") == "2"
+    # When a=0, b=0 -> evaluates to 3
+    assert evaluate_expression("0 ? 1 : 0 ? 2 : 3") == "3"
+    # When a=1 -> evaluates to 1
+    assert evaluate_expression("1 ? 1 : 0 ? 2 : 3") == "1"
+
+    # 6. Deep 3-level nesting
+    expr_deep = "0 ? 'A' : (0 ? 'B' : (1 ? 'C' : 'D'))"
+    assert evaluate_expression(expr_deep) == "C"
+
+    # 7. Short-circuit lazy evaluation (unselected branch must NOT cause divide by zero or missing var errors)
+    # Division by zero in false branch when condition is True:
+    assert evaluate_expression("1 ? 42 : 100 / 0") == "42"
+    # Division by zero in true branch when condition is False:
+    assert evaluate_expression("0 ? 100 / 0 : 42") == "42"
+    # Undefined variable in unselected branch:
+    assert evaluate_expression("1 ? 99 : nonexistent_variable") == "99"
+    assert evaluate_expression("0 ? nonexistent_variable : 99") == "99"
+
+    # 8. String literals containing '?' and ':' characters
+    assert evaluate_expression("1 ? 'https://example.com?query=1:2' : 'other'") == "https://example.com?query=1:2"
+    assert evaluate_expression("0 ? 'a' : 'colon:separated?question'") == "colon:separated?question"
+
+    # 9. Expressions with context variables and arithmetic inside ternary
+    vars_map = {"x": 10, "y": 20, "name": "Excel"}
+    assert evaluate_expression("x < y ? x + y : x - y", vars_map) == "30"
+    assert evaluate_expression("x > y ? x + y : x - y", vars_map) == "-10"
+    assert evaluate_expression("name == 'Excel' ? strcat(name, 'Checker') : 'Other'", vars_map) == "ExcelChecker"
+
+
+def test_variable_naming_validation_and_global_scope():
+    """Requirement 7: Variable identifier validation and global scope enforcement."""
+    from src.core.context import ExecutionContext
+    from src.core.expression import validate_variable_name
+    from src.core.actions.compute import ComputeAction
+    from src.core.context import HeadlessUIDelegate
+
+    # 1. Identifier validation helper tests
+    assert validate_variable_name("a") is True
+    assert validate_variable_name("_temp") is True
+    assert validate_variable_name("var_123") is True
+    assert validate_variable_name("CamelCase") is True
+    assert validate_variable_name("__double_under__") is True
+
+    # Invalid names
+    assert validate_variable_name("123var") is False  # cannot start with digit
+    assert validate_variable_name("a-b") is False     # no hyphens
+    assert validate_variable_name("a.b") is False     # no dots
+    assert validate_variable_name("var name") is False # no spaces
+    assert validate_variable_name("") is False
+    assert validate_variable_name("   ") is False
+
+    # 2. ExecutionContext.set_var validation
+    ctx = ExecutionContext()
+    ctx.set_var("valid_var", "100")
+    assert ctx.get_var("valid_var") == "100"
+
+    with pytest.raises(ValueError, match="无效的变量名"):
+        ctx.set_var("123_invalid", "test")
+
+    with pytest.raises(ValueError, match="无效的变量名"):
+        ctx.set_var("my-var", "test")
+
+    # 3. ComputeAction left-value validation
+    delegate = HeadlessUIDelegate()
+    act_invalid = ComputeAction({"target_var": "99_invalid", "expression": "1 + 1"})
+    res_invalid = act_invalid.execute(ctx, delegate)
+    assert not res_invalid.success
+    assert "不合法" in res_invalid.error
+
+    act_valid = ComputeAction({"target_var": "total_sum", "expression": "10 + 20"})
+    res_valid = act_valid.execute(ctx, delegate)
+    assert res_valid.success
+    assert ctx.get_var("total_sum") == "30"
+
+    # 4. Global scope verification across sequential steps
+    act_step2 = ComputeAction({"target_var": "accum", "expression": "total_sum * 2"})
+    res_step2 = act_step2.execute(ctx, delegate)
+    assert res_step2.success
+    assert ctx.get_var("accum") == "60"
+    # total_sum remains intact in the global context
+    assert ctx.get_var("total_sum") == "30"
+
+

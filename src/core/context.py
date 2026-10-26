@@ -9,6 +9,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Protocol, Union
 
+from src.core.expression import validate_variable_name
+
 
 class UIDelegate(Protocol):
     """Protocol for UI interactions during workflow execution."""
@@ -153,13 +155,22 @@ class ExecutionContext:
 
     def __init__(self, table_data: Optional[Any] = None, initial_vars: Optional[Dict[str, Any]] = None):
         self.table_data = table_data
-        self.variables: Dict[str, Any] = dict(initial_vars or {})
+        self.variables: Dict[str, Any] = {}
+        if initial_vars:
+            for k, v in initial_vars.items():
+                self.set_var(k, v)
         self.logs: List[str] = []
         self.current_step: int = 1
         self.total_steps: int = 1
 
     def set_var(self, name: str, value: Any) -> None:
-        self.variables[name] = value
+        """Set a variable in global scope with naming rule validation."""
+        clean_name = str(name).strip() if name is not None else ""
+        if not validate_variable_name(clean_name):
+            raise ValueError(
+                f"无效的变量名 '{name}': 变量名必须以字母或下划线开头，且只能包含字母、数字或下划线"
+            )
+        self.variables[clean_name] = value
 
     def get_var(self, name: str, default: Any = None) -> Any:
         return self.variables.get(name, default)

@@ -16,6 +16,7 @@ class ActionResult:
     error: Optional[str] = None
     jump_to: Optional[int] = None
     skip_after: Optional[Tuple[int, int]] = None
+    branch_info: Optional[Dict[str, Any]] = None
 
     @classmethod
     def ok(
@@ -23,12 +24,20 @@ class ActionResult:
         output: Any = None,
         jump_to: Optional[int] = None,
         skip_after: Optional[Tuple[int, int]] = None,
+        branch_info: Optional[Dict[str, Any]] = None,
     ) -> "ActionResult":
-        return cls(success=True, output=output, error=None, jump_to=jump_to, skip_after=skip_after)
+        return cls(
+            success=True,
+            output=output,
+            error=None,
+            jump_to=jump_to,
+            skip_after=skip_after,
+            branch_info=branch_info,
+        )
 
     @classmethod
     def fail(cls, error: str) -> "ActionResult":
-        return cls(success=False, output=None, error=error, jump_to=None, skip_after=None)
+        return cls(success=False, output=None, error=error, jump_to=None, skip_after=None, branch_info=None)
 
 
 class BaseAction(abc.ABC):
