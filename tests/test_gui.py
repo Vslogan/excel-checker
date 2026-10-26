@@ -149,6 +149,70 @@ def test_vscode_scrollbar(qapp):
     qapp.processEvents()
 
 
+def test_compute_ifelse_goto_cards_and_scratch_style(qapp):
+    from src.gui.action_cards import ComputeCard, IfElseCard, GotoCard
+    from src.gui.block_editor import WorkflowPipelineTab
+
+    # 1. Compute Card
+    comp = ComputeCard({"target_var": "total", "expression": "round(a * b, 2)"})
+    assert comp.btn_drag is not None
+    assert comp.edit_target_var.text() == "total"
+    assert comp.edit_expression.text() == "round(a * b, 2)"
+    cfg_comp = comp.to_config()
+    assert cfg_comp["action"] == "compute"
+
+    # 2. Goto Card
+    goto = GotoCard({"condition": "i < 10", "target_line": 2})
+    assert goto.btn_drag is not None
+    assert goto.edit_condition.text() == "i < 10"
+    assert goto.spin_target.value() == 2
+    cfg_goto = goto.to_config()
+    assert cfg_goto["action"] == "goto"
+
+    # 3. If-Else Card & Scratch-style indentation in pipeline
+    pipe = WorkflowPipelineTab()
+    pipe.show()
+    if_card = IfElseCard({"condition": "x > 0", "has_else": True, "then_count": 1, "else_count": 1})
+    pipe.add_card(if_card)
+    pipe.add_card(ComputeCard({"target_var": "r1", "expression": "10"}))
+    pipe.add_card(ComputeCard({"target_var": "r2", "expression": "20"}))
+    qapp.processEvents()
+
+    # Then card has IF branch badge & indent
+    assert not pipe.cards[1].badge_branch.isHidden()
+    assert "IF 分支" in pipe.cards[1].badge_branch.text()
+
+    # Else card has ELSE branch badge & indent
+    assert not pipe.cards[2].badge_branch.isHidden()
+    assert "ELSE 分支" in pipe.cards[2].badge_branch.text()
+
+
+def test_drag_handle_and_pipeline_drag_interactions(qapp):
+    from src.gui.block_editor import WorkflowPipelineTab
+    from src.gui.action_cards import ComputeCard
+    from PyQt5.QtGui import QMouseEvent
+    from PyQt5.QtCore import QPoint, Qt
+
+    pipe = WorkflowPipelineTab()
+    c1 = ComputeCard({"target_var": "v1", "expression": "1"})
+    c2 = ComputeCard({"target_var": "v2", "expression": "2"})
+    pipe.add_card(c1)
+    pipe.add_card(c2)
+
+    # Both cards have drag handle SVG
+    assert c1.btn_drag is not None
+    assert c2.btn_drag is not None
+
+    # Test drag initiate
+    press_event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    pipe._on_card_drag_initiated(c1, press_event)
+    assert pipe._dragging_card == c1
+
+    # Clean up drag
+    pipe._cleanup_drag()
+    assert pipe._dragging_card is None
+
+
 def test_toast_window_and_manager(qapp):
     from src.gui.toast_window import ToastWindow, ToastManager
     w = ToastWindow("Hello Toast", duration_ms=2000, position_mode="top_center")

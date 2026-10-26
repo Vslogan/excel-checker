@@ -1,15 +1,33 @@
 """Action package initialisation and registration."""
 from src.core.actions.base import ActionRegistry, ActionResult, BaseAction
+from src.core.actions.compute import ComputeAction
 from src.core.actions.condition import ConditionAction
 from src.core.actions.extract_cell import ExtractCellAction
 from src.core.actions.file_ops import FileOpsAction
+from src.core.actions.goto import GotoAction
 from src.core.actions.http_request import HttpRequestAction
+from src.core.actions.if_else import IfElseAction
 from src.core.actions.show_message import ShowMessageAction
 from src.core.actions.toast import ToastAction
 from src.core.actions.user_input import UserInputAction
 from src.core.actions.write_clipboard import WriteClipboardAction
 
 # Register actions with standard names and Chinese aliases
+ActionRegistry.register(
+    "compute",
+    ComputeAction,
+    aliases=["计算", "算术运算", "四则运算", "calculate", "expr", "assignment", "赋值"],
+)
+ActionRegistry.register(
+    "if_else",
+    IfElseAction,
+    aliases=["if", "ifelse", "如果", "条件选择", "选择结构"],
+)
+ActionRegistry.register(
+    "goto",
+    GotoAction,
+    aliases=["跳转", "跳转行号", "jump"],
+)
 ActionRegistry.register(
     "extract_cell",
     ExtractCellAction,
@@ -55,6 +73,9 @@ __all__ = [
     "BaseAction",
     "ActionResult",
     "ActionRegistry",
+    "ComputeAction",
+    "IfElseAction",
+    "GotoAction",
     "ExtractCellAction",
     "HttpRequestAction",
     "UserInputAction",

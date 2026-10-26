@@ -155,6 +155,8 @@ class ExecutionContext:
         self.table_data = table_data
         self.variables: Dict[str, Any] = dict(initial_vars or {})
         self.logs: List[str] = []
+        self.current_step: int = 1
+        self.total_steps: int = 1
 
     def set_var(self, name: str, value: Any) -> None:
         self.variables[name] = value

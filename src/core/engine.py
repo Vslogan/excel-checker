@@ -114,8 +114,31 @@ class WorkflowEngine:
         self.log(f"[Engine] Starting workflow for rule: '{rule.name}' with table {table.rows}x{table.cols}")
         delegate.log(f"--- 开始执行规则: 【{rule.name}】 ---")
 
-        for idx, act_cfg in enumerate(rule.workflow):
-            step_num = idx + 1
+        total_steps = len(rule.workflow)
+        context.total_steps = total_steps
+        pc = 0
+        execution_count = 0
+        max_executions = 10000  # safeguard against infinite loops
+        pending_skips: Dict[int, int] = {}  # at_step -> skip_to_step
+
+        while pc < len(rule.workflow):
+            execution_count += 1
+            if execution_count > max_executions:
+                err_msg = f"流程执行步骤达到上限 {max_executions}，检测到可能的死循环并自动终止"
+                delegate.log(f"[Loop Abort] {err_msg}")
+                return WorkflowExecutionResult(
+                    success=False,
+                    rule_name=rule.name,
+                    table_size=(table.rows, table.cols),
+                    variables=context.variables,
+                    logs=list(context.logs),
+                    error=err_msg,
+                    aborted_step=pc + 1,
+                )
+
+            step_num = pc + 1
+            context.current_step = step_num
+            act_cfg = rule.workflow[pc]
             act_name = act_cfg.get("action") or act_cfg.get("type") or act_cfg.get("动作") or "未知"
             self.log(f"[Engine] Executing step {step_num}: {act_name}")
 
@@ -135,6 +158,29 @@ class WorkflowEngine:
                         error=err_msg,
                         aborted_step=step_num,
                     )
+
+                # Register any skip_after from IfElseAction
+                if res.skip_after:
+                    at_s, skip_s = res.skip_after
+                    pending_skips[at_s] = skip_s
+
+                # Check if this action performed an explicit jump (e.g. Goto or If false)
+                if res.jump_to is not None:
+                    target_step = res.jump_to
+                    if target_step > len(rule.workflow):
+                        # Jump past the end of workflow -> finishes workflow
+                        break
+                    pc = target_step - 1
+                else:
+                    # Normal sequential advance
+                    if step_num in pending_skips:
+                        next_step = pending_skips.pop(step_num)
+                        if next_step > len(rule.workflow):
+                            break
+                        pc = next_step - 1
+                    else:
+                        pc += 1
+
             except Exception as e:
                 err_msg = f"步骤 {step_num} ({act_name}) 发生未捕获异常: {str(e)}"
                 delegate.log(f"[Exception] {err_msg}")

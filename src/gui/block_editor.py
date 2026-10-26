@@ -224,6 +224,18 @@ class WorkflowPipelineTab(QWidget):
         btn_add_toast.clicked.connect(lambda: self.add_card_by_type("toast"))
         bar_layout.addWidget(btn_add_toast)
 
+        btn_add_compute = QPushButton("+ 计算")
+        btn_add_compute.clicked.connect(lambda: self.add_card_by_type("compute"))
+        bar_layout.addWidget(btn_add_compute)
+
+        btn_add_if = QPushButton("+ 如果 (if/else)")
+        btn_add_if.clicked.connect(lambda: self.add_card_by_type("if_else"))
+        bar_layout.addWidget(btn_add_if)
+
+        btn_add_goto = QPushButton("+ 跳转 (goto)")
+        btn_add_goto.clicked.connect(lambda: self.add_card_by_type("goto"))
+        bar_layout.addWidget(btn_add_goto)
+
         btn_add_clip = QPushButton("+ 写入剪切板")
         btn_add_clip.clicked.connect(lambda: self.add_card_by_type("write_clipboard"))
         bar_layout.addWidget(btn_add_clip)
@@ -264,6 +276,171 @@ class WorkflowPipelineTab(QWidget):
         self.scroll_area.setVerticalScrollBar(self.vscode_scrollbar)
 
         layout.addWidget(self.scroll_area)
+        self._init_drag_support()
+
+    def _init_drag_support(self):
+        """Initialize drag-and-drop state, visual ghost preview, and insertion indicator."""
+        self._dragging_card: Optional[BaseActionCard] = None
+        self._drag_start_global: Optional[QPoint] = None
+        self._is_dragging: bool = False
+        self._ghost_label: Optional[QLabel] = None
+        self._drop_index: int = -1
+        self._in_delete_zone: bool = False
+
+        # Visual indicator line between cards
+        self._insert_indicator = QFrame(self.cards_container)
+        self._insert_indicator.setFixedHeight(4)
+        self._insert_indicator.setStyleSheet("background-color: #0284c7; border-radius: 2px;")
+        self._insert_indicator.hide()
+
+        # Delete zone banner
+        self._delete_banner = QLabel("🗑️ 拖至此处松开以删除该积木", self)
+        self._delete_banner.setStyleSheet("""
+            QLabel {
+                background-color: rgba(239, 68, 68, 0.95);
+                color: #ffffff;
+                font-weight: bold;
+                font-size: 13px;
+                border-radius: 8px;
+                padding: 10px 18px;
+                border: 2px solid #ffffff;
+            }
+        """)
+        self._delete_banner.adjustSize()
+        self._delete_banner.hide()
+
+    def _on_card_drag_initiated(self, card: BaseActionCard, event):
+        self._dragging_card = card
+        self._drag_start_global = event.globalPos()
+        self._is_dragging = False
+        self._in_delete_zone = False
+
+    def _on_card_drag_moved(self, card: BaseActionCard, event):
+        if not self._dragging_card or self._dragging_card != card:
+            return
+
+        current_global = event.globalPos()
+        if not self._is_dragging:
+            # Check 8px threshold for anti-jitter
+            if (current_global - self._drag_start_global).manhattanLength() >= 8:
+                self._is_dragging = True
+                pix = card.grab()
+                if not self._ghost_label:
+                    self._ghost_label = QLabel(None)
+                    self._ghost_label.setWindowFlags(
+                        Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+                    )
+                    self._ghost_label.setAttribute(Qt.WA_TranslucentBackground)
+                    self._ghost_label.setWindowOpacity(0.85)
+                self._ghost_label.setPixmap(pix)
+                self._ghost_label.resize(card.size())
+                self._ghost_label.show()
+
+        if self._is_dragging and self._ghost_label:
+            # Real-time smooth follow cursor
+            self._ghost_label.move(current_global.x() - 25, current_global.y() - 20)
+
+            # Check Right Scrollbar: fast scrolling
+            sb = self.vscode_scrollbar
+            sb_pos = sb.mapFromGlobal(current_global)
+            scroll_pos = self.scroll_area.mapFromGlobal(current_global)
+
+            if sb_pos.x() >= -10 and sb_pos.x() <= sb.width() + 15:
+                track_h = float(sb.height())
+                ratio = max(0.0, min(1.0, float(sb_pos.y()) / track_h)) if track_h > 0 else 0
+                target_val = int(ratio * (sb.maximum() - sb.minimum()) + sb.minimum())
+                sb.setValue(target_val)
+                self._in_delete_zone = False
+                self._delete_banner.hide()
+                self._insert_indicator.hide()
+                return
+
+            # Check Left: Delete Zone
+            local_pos = self.mapFromGlobal(current_global)
+            if local_pos.x() <= 20 or scroll_pos.x() <= 15:
+                self._in_delete_zone = True
+                self._delete_banner.move(max(10, local_pos.x()), max(10, local_pos.y() - 40))
+                self._delete_banner.show()
+                self._delete_banner.raise_()
+                self._insert_indicator.hide()
+                return
+            else:
+                self._in_delete_zone = False
+                self._delete_banner.hide()
+
+            # Normal card list reordering
+            target_idx = len(self.cards)
+            for idx, c in enumerate(self.cards):
+                c_center_y = c.mapToGlobal(QPoint(0, c.height() // 2)).y()
+                if current_global.y() < c_center_y:
+                    target_idx = idx
+                    break
+
+            self._drop_index = target_idx
+            if 0 <= target_idx < len(self.cards):
+                ref_c = self.cards[target_idx]
+                self._insert_indicator.setGeometry(ref_c.x(), max(0, ref_c.y() - 6), ref_c.width(), 4)
+                self._insert_indicator.show()
+                self._insert_indicator.raise_()
+            elif self.cards:
+                ref_c = self.cards[-1]
+                self._insert_indicator.setGeometry(ref_c.x(), ref_c.y() + ref_c.height() + 2, ref_c.width(), 4)
+                self._insert_indicator.show()
+                self._insert_indicator.raise_()
+
+    def _on_card_drag_released(self, card: BaseActionCard, event):
+        if not self._dragging_card or self._dragging_card != card:
+            return
+
+        is_drag = self._is_dragging
+        in_del = self._in_delete_zone
+        drop_i = self._drop_index
+        self._cleanup_drag()
+
+        if not is_drag:
+            return
+
+        if in_del:
+            # Secondary confirmation dialog
+            from PyQt5.QtWidgets import QMessageBox
+            msg = f"确定要删除【第 {card.step_number} 步 · {card.display_title}】吗？"
+            reply = QMessageBox.question(
+                self,
+                "确认删除积木",
+                msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                self.remove_card(card)
+            else:
+                self._renumber_steps()
+            return
+
+        # Reorder card
+        if drop_i >= 0 and card in self.cards:
+            old_idx = self.cards.index(card)
+            target_idx = drop_i
+            if target_idx > old_idx:
+                target_idx -= 1
+            if target_idx != old_idx:
+                self.cards.remove(card)
+                self.cards.insert(target_idx, card)
+                for idx, c in enumerate(self.cards):
+                    self.cards_layout.removeWidget(c)
+                    self.cards_layout.insertWidget(idx, c)
+                self._renumber_steps()
+                self.changed.emit()
+
+    def _cleanup_drag(self):
+        if self._ghost_label:
+            self._ghost_label.hide()
+        self._insert_indicator.hide()
+        self._delete_banner.hide()
+        self._dragging_card = None
+        self._is_dragging = False
+        self._in_delete_zone = False
+        self._drop_index = -1
 
     def add_card_by_type(self, action_type: str, config: Optional[Dict[str, Any]] = None):
         cfg = dict(config or {})
@@ -277,6 +454,9 @@ class WorkflowPipelineTab(QWidget):
         card.move_up_requested.connect(self.move_card_up)
         card.move_down_requested.connect(self.move_card_down)
         card.clone_requested.connect(self.clone_card)
+        card.drag_initiated.connect(self._on_card_drag_initiated)
+        card.drag_moved.connect(self._on_card_drag_moved)
+        card.drag_released.connect(self._on_card_drag_released)
 
         self.cards.append(card)
         self.cards_layout.insertWidget(len(self.cards) - 1, card)
@@ -325,10 +505,36 @@ class WorkflowPipelineTab(QWidget):
         self.changed.emit()
 
     def _renumber_steps(self):
+        # Determine branching indentation for Scratch-style display
+        branch_mapping = {}  # index -> (level, branch_type)
+        i = 0
+        while i < len(self.cards):
+            card = self.cards[i]
+            if getattr(card, "action_type", "") == "if_else":
+                then_cnt = getattr(card, "spin_then_count", None)
+                then_val = then_cnt.value() if then_cnt else getattr(card, "then_count", 1)
+                has_else = getattr(card, "chk_has_else", None)
+                else_flag = has_else.isChecked() if has_else else getattr(card, "has_else", False)
+                else_cnt = getattr(card, "spin_else_count", None)
+                else_val = else_cnt.value() if else_cnt else getattr(card, "else_count", 0)
+
+                for k in range(1, then_val + 1):
+                    if i + k < len(self.cards):
+                        branch_mapping[i + k] = (1, "if")
+                if else_flag and else_val > 0:
+                    start_else = i + 1 + then_val
+                    for k in range(else_val):
+                        if start_else + k < len(self.cards):
+                            branch_mapping[start_else + k] = (1, "else")
+            i += 1
+
         for i, card in enumerate(self.cards):
             card.set_step_number(i + 1)
+            level, branch_type = branch_mapping.get(i, (0, None))
+            card.set_indent_level(level, branch_type)
             card.btn_up.setEnabled(i > 0)
             card.btn_down.setEnabled(i < len(self.cards) - 1)
+
         self.lbl_step_count.setText(f"当前共 {len(self.cards)} 个步骤")
         if hasattr(self, "vscode_scrollbar"):
             self.vscode_scrollbar.update()

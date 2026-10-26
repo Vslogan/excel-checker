@@ -72,6 +72,63 @@ def create_svg_tip_button(tip_text: str = "") -> QToolButton:
     return btn
 
 
+def create_svg_drag_handle_button() -> QToolButton:
+    """Create a sleek SVG grip/drag handle button with 6 dots."""
+    btn = QToolButton()
+    btn.setFixedSize(22, 22)
+    btn.setCursor(Qt.SizeAllCursor)
+    btn.setAutoRaise(True)
+    btn.setToolTip("按住拖拽积木：拖动重新排序；拖至右侧滚动条快速定位；拖至左侧删除积木")
+
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="5" cy="4" r="1.5" fill="#94a3b8"/>
+      <circle cx="11" cy="4" r="1.5" fill="#94a3b8"/>
+      <circle cx="5" cy="8" r="1.5" fill="#94a3b8"/>
+      <circle cx="11" cy="8" r="1.5" fill="#94a3b8"/>
+      <circle cx="5" cy="12" r="1.5" fill="#94a3b8"/>
+      <circle cx="11" cy="12" r="1.5" fill="#94a3b8"/>
+    </svg>"""
+
+    try:
+        from PyQt5.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pix = QPixmap(16, 16)
+        pix.fill(Qt.transparent)
+        painter = QPainter(pix)
+        renderer.render(painter)
+        painter.end()
+        btn.setIcon(QIcon(pix))
+    except Exception:
+        btn.setText("⋮⋮")
+
+    btn.setStyleSheet("""
+        QToolButton {
+            border: 1px solid transparent;
+            border-radius: 4px;
+            background-color: transparent;
+            padding: 0;
+            margin-right: 4px;
+        }
+        QToolButton:hover {
+            background-color: #f1f5f9;
+            border-color: #cbd5e1;
+        }
+    """)
+    return btn
+
+
+class DummyButton:
+    """Dummy button stub for backward compatibility with tests/code referencing btn_up/btn_down."""
+    def __init__(self):
+        self._enabled = True
+
+    def setEnabled(self, enabled: bool):
+        self._enabled = enabled
+
+    def isEnabled(self) -> bool:
+        return self._enabled
+
+
 class BaseActionCard(QFrame):
     """Base class for all action cards in the visual block editor."""
 
@@ -80,6 +137,9 @@ class BaseActionCard(QFrame):
     move_up_requested = pyqtSignal(object)
     move_down_requested = pyqtSignal(object)
     clone_requested = pyqtSignal(object)
+    drag_initiated = pyqtSignal(object, object)  # (card, mouse_press_event)
+    drag_moved = pyqtSignal(object, object)      # (card, mouse_move_event)
+    drag_released = pyqtSignal(object, object)   # (card, mouse_release_event)
 
     action_type = "base"
     display_title = "基础积木"
@@ -87,6 +147,9 @@ class BaseActionCard(QFrame):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.step_number: int = 1
+        self._indent_level: int = 0
+        self._branch_type: Optional[str] = None
         self.setObjectName(f"card_{self.action_type}_{abs(id(self))}")
         self.setStyleSheet(f"""
             QFrame#{self.objectName()} {{
@@ -104,34 +167,42 @@ class BaseActionCard(QFrame):
 
         # Header bar
         self.header_layout = QHBoxLayout()
+
+        # SVG Drag Handle on the far left
+        self.btn_drag = create_svg_drag_handle_button()
+        self.btn_drag.installEventFilter(self)
+        self.header_layout.addWidget(self.btn_drag)
+
+        # Title label
         self.title_label = QLabel(f"<b>{self.display_title}</b>")
         self.title_label.setStyleSheet(f"color: {self.color_border}; font-size: 13px;")
         self.header_layout.addWidget(self.title_label)
+
+        # Branch Badge (for Scratch-style IF / ELSE indent)
+        self.badge_branch = QLabel("")
+        self.badge_branch.setVisible(False)
+        self.header_layout.addWidget(self.badge_branch)
 
         # SVG Exclamation Mark Tip Button
         self.btn_tip = create_svg_tip_button()
         self.header_layout.addWidget(self.btn_tip)
         self.header_layout.addStretch()
 
-        # Action buttons
-        self.btn_up = QPushButton("▲ 上移")
-        self.btn_up.setToolTip("将该积木向上移动")
-        self.btn_up.clicked.connect(lambda: self.move_up_requested.emit(self))
-        self.header_layout.addWidget(self.btn_up)
+        # Backward compatibility dummies for up/down
+        self.btn_up = DummyButton()
+        self.btn_down = DummyButton()
 
-        self.btn_down = QPushButton("▼ 下移")
-        self.btn_down.setToolTip("将该积木向下移动")
-        self.btn_down.clicked.connect(lambda: self.move_down_requested.emit(self))
-        self.header_layout.addWidget(self.btn_down)
-
+        # Clone button
         self.btn_clone = QPushButton("复制")
         self.btn_clone.setToolTip("克隆该动作积木")
         self.btn_clone.clicked.connect(lambda: self.clone_requested.emit(self))
         self.header_layout.addWidget(self.btn_clone)
 
+        # Delete button
         self.btn_del = QPushButton("删除")
         self.btn_del.setToolTip("删除该动作积木")
         self.btn_del.setProperty("id", "dangerBtn")
+        self.btn_del.setStyleSheet("QPushButton { color: #dc2626; border-color: #fca5a5; } QPushButton:hover { background-color: #fee2e2; }")
         self.btn_del.clicked.connect(lambda: self.delete_requested.emit(self))
         self.header_layout.addWidget(self.btn_del)
 
@@ -148,7 +219,71 @@ class BaseActionCard(QFrame):
         if config:
             self.load_config(config)
 
+    def eventFilter(self, obj, event):
+        """Forward mouse press, move, release on drag handle to initiate dragging."""
+        if obj == self.btn_drag:
+            t = event.type()
+            if t == event.MouseButtonPress and event.button() == Qt.LeftButton:
+                self.drag_initiated.emit(self, event)
+                return True
+            elif t == event.MouseMove and (event.buttons() & Qt.LeftButton):
+                self.drag_moved.emit(self, event)
+                return True
+            elif t == event.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self.drag_released.emit(self, event)
+                return True
+        return super().eventFilter(obj, event)
+
+    def set_indent_level(self, level: int = 0, branch_type: Optional[str] = None):
+        """Apply Scratch-style indented wrapping and left colored connector border."""
+        self._indent_level = level
+        self._branch_type = branch_type
+
+        if level > 0 and branch_type == "if":
+            margin_left = 28 * level
+            self.badge_branch.setText(" IF 分支 ")
+            self.badge_branch.setStyleSheet("background-color: #fef3c7; color: #b45309; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; margin-left: 6px;")
+            self.badge_branch.setVisible(True)
+            self.setStyleSheet(f"""
+                QFrame#{self.objectName()} {{
+                    background-color: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    border-left: 6px solid #f59e0b;
+                    border-radius: 8px;
+                    padding: 4px;
+                    margin-left: {margin_left}px;
+                }}
+            """)
+        elif level > 0 and branch_type == "else":
+            margin_left = 28 * level
+            self.badge_branch.setText(" ELSE 分支 ")
+            self.badge_branch.setStyleSheet("background-color: #ffedd5; color: #c2410c; font-weight: bold; font-size: 11px; border-radius: 4px; padding: 2px 6px; margin-left: 6px;")
+            self.badge_branch.setVisible(True)
+            self.setStyleSheet(f"""
+                QFrame#{self.objectName()} {{
+                    background-color: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    border-left: 6px solid #ea580c;
+                    border-radius: 8px;
+                    padding: 4px;
+                    margin-left: {margin_left}px;
+                }}
+            """)
+        else:
+            self.badge_branch.setVisible(False)
+            self.setStyleSheet(f"""
+                QFrame#{self.objectName()} {{
+                    background-color: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    border-left: 5px solid {self.color_border};
+                    border-radius: 8px;
+                    padding: 4px;
+                    margin-left: 0px;
+                }}
+            """)
+
     def set_step_number(self, num: int):
+        self.step_number = num
         self.title_label.setText(f"<b>第 {num} 步 · {self.display_title}</b>")
 
     def set_tip_text(self, tip_text: str):
@@ -576,6 +711,229 @@ class FileOpsCard(BaseActionCard):
         }
 
 
+class ComputeCard(BaseActionCard):
+    """Card for Compute action (Arithmetic, Logic, Built-in Functions)."""
+    action_type = "compute"
+    display_title = "计算 (Compute / Assignment)"
+    color_border = "#8b5cf6"
+
+    def setup_ui(self):
+        tip = (
+            "<b>计算 (Compute)</b><br/>"
+            "输入左值变量名与右值复杂计算表达式：<br/>"
+            "• <b>四则运算与取模</b>: +, -, *, /, % (自动转换数字，默认最大保留6位非零小数)<br/>"
+            "• <b>逻辑与比较运算</b>: && (与), || (或), ! (非), ==, !=, &lt;, &lt;=, &gt;, &gt;= (结果严格非零即一)<br/>"
+            "• <b>内置函数</b>: round(x, [n]), ceil(x), floor(x), str(x), substr(s, start, [len]), strcat(s1, s2, ...)<br/>"
+            "• 支持小括号优先级，例如: round({{price}} * 1.05 + ceil(total / 2), 2)"
+        )
+        self.btn_tip.setToolTip(tip)
+
+        self.edit_target_var = QLineEdit()
+        self.edit_target_var.setPlaceholderText("例如: res, count, final_price")
+        self.edit_target_var.textChanged.connect(self.changed.emit)
+        self.form_layout.addRow("左值 (结果变量名):", self.edit_target_var)
+
+        self.edit_expression = QLineEdit()
+        self.edit_expression.setPlaceholderText("例如: round({{price}} * {{count}} * 1.05, 2) 或 i + 1")
+        self.edit_expression.textChanged.connect(self.changed.emit)
+        self.form_layout.addRow("右值 (计算表达式):", self.edit_expression)
+
+    def load_config(self, config: Dict[str, Any]):
+        t = (
+            config.get("target_var")
+            or config.get("variable")
+            or config.get("var")
+            or config.get("左值")
+            or config.get("左值变量名")
+            or config.get("变量名")
+            or ""
+        )
+        self.edit_target_var.setText(str(t))
+        e = (
+            config.get("expression")
+            or config.get("expr")
+            or config.get("右值")
+            or config.get("复杂的右值")
+            or config.get("表达式")
+            or config.get("计算表达式")
+            or ""
+        )
+        self.edit_expression.setText(str(e))
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "action": "compute",
+            "target_var": self.edit_target_var.text().strip(),
+            "expression": self.edit_expression.text().strip(),
+        }
+
+
+class IfElseCard(BaseActionCard):
+    """Card for If-Else conditional branch with Scratch-like wrapping."""
+    action_type = "if_else"
+    display_title = "如果 (If - 条件分支)"
+    color_border = "#f59e0b"
+
+    def setup_ui(self):
+        tip = (
+            "<b>如果 (If-Else 条件分支)</b><br/>"
+            "输入条件表达式进行逻辑选择：<br/>"
+            "• 若计算结果非零 (True)，依次执行 IF 分支内积木，完成后自动跳过 ELSE 分支。<br/>"
+            "• 若计算结果为 0 (False)，跳过 IF 分支，或进入 ELSE 分支（若开启）。<br/>"
+            "• 支持在分支内使用 Goto 实现灵活循环与跳转。"
+        )
+        self.btn_tip.setToolTip(tip)
+
+        self.edit_condition = QLineEdit()
+        self.edit_condition.setPlaceholderText("例如: val > 100 或 count == 0 或 (a > 0 && b < 5)")
+        self.edit_condition.textChanged.connect(self._update_summary)
+        self.form_layout.addRow("IF 条件表达式:", self.edit_condition)
+
+        # Has else checkbox
+        self.chk_has_else = QCheckBox("包含 ELSE 分支 (否则)")
+        self.chk_has_else.toggled.connect(self._on_else_toggled)
+        self.form_layout.addRow("分支选项:", self.chk_has_else)
+
+        # Spinners layout
+        counts_layout = QHBoxLayout()
+        counts_layout.addWidget(QLabel("IF 包含积木数:"))
+        self.spin_then_count = QSpinBox()
+        self.spin_then_count.setRange(0, 99)
+        self.spin_then_count.setValue(1)
+        self.spin_then_count.valueChanged.connect(self._update_summary)
+        counts_layout.addWidget(self.spin_then_count)
+
+        self.lbl_else_count = QLabel("ELSE 包含积木数:")
+        counts_layout.addWidget(self.lbl_else_count)
+        self.spin_else_count = QSpinBox()
+        self.spin_else_count.setRange(0, 99)
+        self.spin_else_count.setValue(1)
+        self.spin_else_count.setEnabled(False)
+        self.spin_else_count.valueChanged.connect(self._update_summary)
+        counts_layout.addWidget(self.spin_else_count)
+
+        counts_layout.addStretch()
+        self.form_layout.addRow("分支范围:", counts_layout)
+
+        # Summary guidance label
+        self.lbl_summary = QLabel("")
+        self.lbl_summary.setStyleSheet("color: #b45309; background: #fef3c7; border: 1px dashed #fcd34d; border-radius: 4px; padding: 4px 8px; font-size: 11px;")
+        self.form_layout.addRow("", self.lbl_summary)
+
+        self._update_summary()
+
+    def _on_else_toggled(self, checked: bool):
+        self.spin_else_count.setEnabled(checked)
+        self._update_summary()
+
+    def _update_summary(self):
+        then_cnt = self.spin_then_count.value()
+        has_else = self.chk_has_else.isChecked()
+        else_cnt = self.spin_else_count.value() if has_else else 0
+        cond = self.edit_condition.text().strip() or "条件"
+
+        if has_else:
+            text = f"结构: 如果 [{cond}] 成立 → 执行紧随其后的 {then_cnt} 个积木；否则 → 执行再之后的 {else_cnt} 个积木"
+        else:
+            text = f"结构: 如果 [{cond}] 成立 → 执行紧随其后的 {then_cnt} 个积木；否则 → 直接跳过继续向下执行"
+        self.lbl_summary.setText(text)
+        self.changed.emit()
+
+    def load_config(self, config: Dict[str, Any]):
+        cond = config.get("condition") or config.get("cond") or config.get("if条件") or config.get("条件") or ""
+        self.edit_condition.setText(str(cond))
+        has_else = bool(
+            config.get("has_else", False)
+            or config.get("else", False)
+            or config.get("包含else", False)
+            or config.get("是否有else", False)
+        )
+        self.chk_has_else.setChecked(has_else)
+        then_cnt = int(
+            config.get("then_count")
+            or config.get("if_count")
+            or config.get("if下面有多少个积木")
+            or config.get("if积木数")
+            or 1
+        )
+        self.spin_then_count.setValue(then_cnt)
+        else_cnt = int(
+            config.get("else_count")
+            or config.get("else下面有多少个积木")
+            or config.get("else积木数")
+            or 1
+        )
+        self.spin_else_count.setValue(else_cnt)
+        self._update_summary()
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "action": "if_else",
+            "condition": self.edit_condition.text().strip(),
+            "has_else": self.chk_has_else.isChecked(),
+            "then_count": self.spin_then_count.value(),
+            "else_count": self.spin_else_count.value() if self.chk_has_else.isChecked() else 0,
+        }
+
+
+class GotoCard(BaseActionCard):
+    """Card for Goto conditional/unconditional jump."""
+    action_type = "goto"
+    display_title = "跳转 (Goto / Loop Jump)"
+    color_border = "#ef4444"
+
+    def setup_ui(self):
+        tip = (
+            "<b>跳转 (Goto)</b><br/>"
+            "流程控制与循环跳转：<br/>"
+            "• <b>跳转条件</b>: 表达式计算结果非零时执行跳转；为 0 时跳过并顺序执行下一步。<br/>"
+            "• 默认填 '1' 即为无条件强制跳转。<br/>"
+            "• <b>目标行号</b>: 步骤编号 (从 1 开始计数)，支持向前跳转形成循环，或向后跳转跳过特定步骤。"
+        )
+        self.btn_tip.setToolTip(tip)
+
+        self.edit_condition = QLineEdit()
+        self.edit_condition.setText("1")
+        self.edit_condition.setPlaceholderText("例如: i <= 5 或 1 (无条件跳转)")
+        self.edit_condition.textChanged.connect(self.changed.emit)
+        self.form_layout.addRow("跳转条件 (非零跳转):", self.edit_condition)
+
+        self.spin_target = QSpinBox()
+        self.spin_target.setRange(1, 9999)
+        self.spin_target.setValue(1)
+        self.spin_target.valueChanged.connect(self.changed.emit)
+        self.form_layout.addRow("目标行号 (Step):", self.spin_target)
+
+    def load_config(self, config: Dict[str, Any]):
+        c = (
+            config.get("condition")
+            or config.get("cond")
+            or config.get("条件")
+            or config.get("跳转条件")
+            or "1"
+        )
+        self.edit_condition.setText(str(c))
+        t = (
+            config.get("target_line")
+            or config.get("target")
+            or config.get("line")
+            or config.get("行号")
+            or config.get("目标行号")
+            or 1
+        )
+        try:
+            self.spin_target.setValue(int(float(str(t))))
+        except Exception:
+            self.spin_target.setValue(1)
+
+    def to_config(self) -> Dict[str, Any]:
+        return {
+            "action": "goto",
+            "condition": self.edit_condition.text().strip() or "1",
+            "target_line": self.spin_target.value(),
+        }
+
+
 def create_card_for_action(action_config: Dict[str, Any], parent: Optional[QWidget] = None) -> BaseActionCard:
     """Factory creating appropriate action card for config."""
     act_type = (
@@ -587,6 +945,17 @@ def create_card_for_action(action_config: Dict[str, Any], parent: Optional[QWidg
     )
 
     card_map = {
+        "compute": ComputeCard,
+        "calculate": ComputeCard,
+        "计算": ComputeCard,
+        "赋值": ComputeCard,
+        "if_else": IfElseCard,
+        "if": IfElseCard,
+        "如果": IfElseCard,
+        "条件选择": IfElseCard,
+        "goto": GotoCard,
+        "跳转": GotoCard,
+        "跳转行号": GotoCard,
         "extract_cell": ExtractCellCard,
         "提取某一格": ExtractCellCard,
         "提取单元格": ExtractCellCard,
