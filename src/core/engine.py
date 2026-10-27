@@ -106,14 +106,20 @@ class WorkflowEngine:
         table: TableData,
         ui_delegate: Optional[UIDelegate] = None,
         initial_vars: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> WorkflowExecutionResult:
         """Execute a rule's workflow sequentially."""
         delegate = ui_delegate or HeadlessUIDelegate()
         context = ExecutionContext(table_data=table, initial_vars=initial_vars)
 
-        # Establish system variables 'row' and 'column' representing actual table dimensions
+        # Establish system variables representing actual table dimensions
+        # Always assigned to current copied table dimensions regardless of whether conditions are fuzzy or exact!
         context.set_var("row", str(table.rows))
         context.set_var("column", str(table.cols))
+        context.set_var("colunm", str(table.cols))  # alias for common spelling typo
+        context.set_var("rows", str(table.rows))
+        context.set_var("cols", str(table.cols))
 
         self.log(f"[Engine] Starting workflow for rule: '{rule.name}' with table {table.rows}x{table.cols}")
         delegate.log(f"--- 开始执行规则: 【{rule.name}】 ---")
@@ -136,6 +142,19 @@ class WorkflowEngine:
         pending_skips: Dict[int, int] = {}  # at_step -> skip_to_step
 
         while pc < len(rule.workflow):
+            if cancel_check and cancel_check():
+                err_msg = "用户手动取消了任务执行"
+                delegate.log(f"[Cancelled] {err_msg}")
+                return WorkflowExecutionResult(
+                    success=False,
+                    rule_name=rule.name,
+                    table_size=(table.rows, table.cols),
+                    variables=context.variables,
+                    logs=list(context.logs),
+                    error=err_msg,
+                    aborted_step=pc + 1,
+                )
+
             execution_count += 1
             if execution_count > max_executions:
                 err_msg = f"流程执行步骤达到上限 {max_executions}，检测到可能的死循环并自动终止"
@@ -155,6 +174,9 @@ class WorkflowEngine:
             act_cfg = rule.workflow[pc]
             act_name = act_cfg.get("action") or act_cfg.get("type") or act_cfg.get("动作") or "未知"
             self.log(f"[Engine] Executing step {step_num}: {act_name}")
+
+            if progress_callback:
+                progress_callback(step_num, total_steps, str(act_name))
 
             try:
                 action = ActionRegistry.create(act_cfg)

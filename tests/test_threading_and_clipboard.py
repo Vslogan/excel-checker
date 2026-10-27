@@ -208,3 +208,157 @@ def test_delegate_show_toast_blocking_and_nonblocking(qapp):
     assert toast_log[1]["content"] == "后台阻塞冒泡"
     assert len(blocking_done) == 1
 
+
+def test_worker_row_and_column_variables_exact_match(qapp):
+    """Verify that row and column (and typo colunm) are properly available in worker for exact match."""
+    rule = RuleConfig(
+        name="尺寸精确测试规则",
+        table_size=(3, 4),
+        workflow=[
+            {"action": "compute", "target_var": "r_val", "expression": "row"},
+            {"action": "compute", "target_var": "c_val", "expression": "column"},
+            {"action": "compute", "target_var": "typo_val", "expression": "colunm"},
+            {"action": "compute", "target_var": "cells_count", "expression": "row * column"},
+        ]
+    )
+    raw_tsv = "a1\tb1\tc1\td1\na2\tb2\tc2\td2\na3\tb3\tc3\td3"
+    table = TableData.from_text(raw_tsv)
+    assert table.rows == 3
+    assert table.cols == 4
+
+    delegate = ThreadSafeUIDelegate()
+    worker = WorkflowWorker(rule, table, delegate)
+
+    results = []
+    worker.finished_signal.connect(lambda r: results.append(r))
+    worker.start()
+
+    timeout = time.time() + 3.0
+    while not results and time.time() < timeout:
+        qapp.processEvents()
+        QThread.msleep(20)
+
+    assert len(results) == 1
+    res = results[0]
+    assert res.success is True, f"Worker failed with error: {res.error}"
+    assert res.variables.get("row") == "3"
+    assert res.variables.get("column") == "4"
+    assert res.variables.get("colunm") == "4"
+    assert res.variables.get("r_val") == "3"
+    assert res.variables.get("c_val") == "4"
+    assert res.variables.get("typo_val") == "4"
+    assert res.variables.get("cells_count") == "12"
+
+
+def test_worker_row_and_column_variables_fuzzy_match(qapp):
+    """Verify that row and column are set to actual copied dimensions even when fuzzy matching is enabled."""
+    rule = RuleConfig(
+        name="尺寸模糊测试规则",
+        table_size=(1, 1),
+        fuzzy_row=True,
+        fuzzy_col=True,
+        workflow=[
+            {"action": "compute", "target_var": "r_val", "expression": "row"},
+            {"action": "compute", "target_var": "c_val", "expression": "column"},
+            {"action": "compute", "target_var": "typo_val", "expression": "colunm"},
+            {"action": "compute", "target_var": "sum_dims", "expression": "row + column"},
+        ]
+    )
+    # Copied table has 5 rows and 2 columns
+    raw_tsv = "10\t20\n30\t40\n50\t60\n70\t80\n90\t100"
+    table = TableData.from_text(raw_tsv)
+    assert table.rows == 5
+    assert table.cols == 2
+
+    delegate = ThreadSafeUIDelegate()
+    worker = WorkflowWorker(rule, table, delegate)
+
+    results = []
+    worker.finished_signal.connect(lambda r: results.append(r))
+    worker.start()
+
+    timeout = time.time() + 3.0
+    while not results and time.time() < timeout:
+        qapp.processEvents()
+        QThread.msleep(20)
+
+    assert len(results) == 1
+    res = results[0]
+    assert res.success is True, f"Worker failed with error: {res.error}"
+    assert res.variables.get("row") == "5"
+    assert res.variables.get("column") == "2"
+    assert res.variables.get("colunm") == "2"
+    assert res.variables.get("r_val") == "5"
+    assert res.variables.get("c_val") == "2"
+    assert res.variables.get("typo_val") == "2"
+    assert res.variables.get("sum_dims") == "7"
+
+
+def test_worker_plain_text_1x1_variables(qapp):
+    """Verify that 1x1 plain text assigns row=1, column=1 to context variables."""
+    rule = RuleConfig(
+        name="纯文本1x1测试规则",
+        table_size=(1, 1),
+        workflow=[
+            {"action": "compute", "target_var": "r_val", "expression": "row"},
+            {"action": "compute", "target_var": "c_val", "expression": "column"},
+        ]
+    )
+    table = TableData.from_text("plain single line string")
+    assert table.rows == 1
+    assert table.cols == 1
+
+    delegate = ThreadSafeUIDelegate()
+    worker = WorkflowWorker(rule, table, delegate)
+
+    results = []
+    worker.finished_signal.connect(lambda r: results.append(r))
+    worker.start()
+
+    timeout = time.time() + 3.0
+    while not results and time.time() < timeout:
+        qapp.processEvents()
+        QThread.msleep(20)
+
+    assert len(results) == 1
+    res = results[0]
+    assert res.success is True
+    assert res.variables.get("row") == "1"
+    assert res.variables.get("column") == "1"
+    assert res.variables.get("colunm") == "1"
+
+
+def test_worker_workflow_features_and_cancellation(qapp):
+    """Verify that WorkflowWorker properly handles if/else branches, goto jumps, and cancellation."""
+    # Test if/else and goto support in worker
+    rule = RuleConfig(
+        name="高级控制流规则",
+        table_size=(2, 2),
+        workflow=[
+            {"action": "if_else", "condition": "row == 2", "then_count": 1, "else_count": 1},
+            {"action": "compute", "target_var": "branch", "expression": "'THEN_BRANCH'"},
+            {"action": "compute", "target_var": "branch", "expression": "'ELSE_BRANCH'"},
+            {"action": "exit"},
+            {"action": "compute", "target_var": "should_not_run", "expression": "'NO'"},
+        ]
+    )
+    table = TableData.from_text("r1c1\tr1c2\nr2c1\tr2c2")
+    delegate = ThreadSafeUIDelegate()
+    worker = WorkflowWorker(rule, table, delegate)
+
+    results = []
+    worker.finished_signal.connect(lambda r: results.append(r))
+    worker.start()
+
+    timeout = time.time() + 3.0
+    while not results and time.time() < timeout:
+        qapp.processEvents()
+        QThread.msleep(20)
+
+    assert len(results) == 1
+    res = results[0]
+    assert res.success is True
+    assert res.variables.get("branch") == "THEN_BRANCH"
+    assert "should_not_run" not in res.variables
+
+

@@ -205,7 +205,7 @@ class TriggerConfigTab(QWidget):
         spin_box.addStretch()
         dim_layout.addLayout(spin_box)
 
-        dim_tip = QLabel("<font color='#0284c7'>💡 说明：模糊匹配时任意行/列尺寸均视为匹配，并将实际尺寸自动存入系统变量 <b>row</b> 与 <b>column</b> 供后续积木引用。</font>")
+        dim_tip = QLabel("<font color='#0284c7'>💡 说明：当脚本满足条件开始运行时，系统变量 <b>row</b> 与 <b>column</b>（含容错别名 <b>colunm</b>）始终自动赋值为当前复制表格的实际行数与列数（无论尺寸条件是否勾选模糊匹配）。</font>")
         dim_layout.addWidget(dim_tip)
         layout.addWidget(dim_group)
 

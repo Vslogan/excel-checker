@@ -8,7 +8,7 @@ from PyQt5.QtCore import QObject, QThread, pyqtSignal
 from src.core.actions.base import ActionRegistry, ActionResult
 from src.core.config_model import RuleConfig
 from src.core.context import ExecutionContext, UIDelegate
-from src.core.engine import WorkflowExecutionResult
+from src.core.engine import WorkflowEngine, WorkflowExecutionResult
 from src.core.table_parser import TableData
 
 
@@ -31,7 +31,13 @@ class WorkflowWorker(QThread):
         self.rule = rule
         self.table = table
         self.ui_delegate = ui_delegate
-        self.initial_vars = initial_vars or {}
+        # Always pre-initialize row and column system variables from the copied table dimensions
+        self.initial_vars = dict(initial_vars or {})
+        self.initial_vars.setdefault("row", str(table.rows))
+        self.initial_vars.setdefault("column", str(table.cols))
+        self.initial_vars.setdefault("colunm", str(table.cols))  # alias for common spelling typo
+        self.initial_vars.setdefault("rows", str(table.rows))
+        self.initial_vars.setdefault("cols", str(table.cols))
         self._is_cancelled = False
         self.execution_thread_id: Optional[int] = None
 
@@ -47,82 +53,28 @@ class WorkflowWorker(QThread):
         table = self.table
         delegate = self.ui_delegate
 
-        context = ExecutionContext(table_data=table, initial_vars=self.initial_vars)
-        total_steps = len(rule.workflow)
-
         delegate.log(f"--- [后台任务] 开始异步执行规则: 【{rule.name}】 ---")
 
-        for idx, act_cfg in enumerate(rule.workflow):
-            if self._is_cancelled:
-                err_msg = "用户手动取消了任务执行"
-                delegate.log(f"[Cancelled] {err_msg}")
-                res = WorkflowExecutionResult(
-                    success=False,
-                    rule_name=rule.name,
-                    table_size=(table.rows, table.cols),
-                    variables=context.variables,
-                    logs=list(context.logs),
-                    error=err_msg,
-                    aborted_step=idx + 1,
-                )
-                self.finished_signal.emit(res)
-                return
+        engine = WorkflowEngine()
 
-            step_num = idx + 1
-            act_name = (
-                act_cfg.get("action")
-                or act_cfg.get("动作")
-                or act_cfg.get("action_type")
-                or act_cfg.get("type")
-                or "未知动作"
-            )
+        def on_progress(cur_step: int, total_steps: int, act_name: str):
+            self.progress_signal.emit(cur_step, total_steps, str(act_name))
 
-            self.progress_signal.emit(step_num, total_steps, str(act_name))
-            delegate.log(f"[步骤 {step_num}/{total_steps}] 正在执行动作: {act_name}")
+        def is_cancelled() -> bool:
+            return self._is_cancelled
 
-            try:
-                action = ActionRegistry.create(act_cfg)
-                action_res: ActionResult = action.execute(context, delegate)
-
-                if not action_res.success:
-                    err_msg = f"步骤 {step_num} ({act_name}) 执行失败: {action_res.error}"
-                    delegate.log(f"[Error] {err_msg}")
-                    res = WorkflowExecutionResult(
-                        success=False,
-                        rule_name=rule.name,
-                        table_size=(table.rows, table.cols),
-                        variables=context.variables,
-                        logs=list(context.logs),
-                        error=err_msg,
-                        aborted_step=step_num,
-                    )
-                    self.finished_signal.emit(res)
-                    return
-            except Exception as e:
-                err_msg = f"步骤 {step_num} ({act_name}) 抛出未捕获异常: {str(e)}"
-                delegate.log(f"[Exception] {err_msg}")
-                res = WorkflowExecutionResult(
-                    success=False,
-                    rule_name=rule.name,
-                    table_size=(table.rows, table.cols),
-                    variables=context.variables,
-                    logs=list(context.logs),
-                    error=err_msg,
-                    aborted_step=step_num,
-                )
-                self.finished_signal.emit(res)
-                return
-
-        delegate.log(f"--- [后台任务] 规则 【{rule.name}】 全部流程异步执行完毕 ---")
-        combined_logs = list(context.logs)
-        if hasattr(delegate, "logs"):
-            combined_logs.extend(delegate.logs)
-
-        res = WorkflowExecutionResult(
-            success=True,
-            rule_name=rule.name,
-            table_size=(table.rows, table.cols),
-            variables=context.variables,
-            logs=combined_logs,
+        res = engine.execute_rule(
+            rule=rule,
+            table=table,
+            ui_delegate=delegate,
+            initial_vars=self.initial_vars,
+            progress_callback=on_progress,
+            cancel_check=is_cancelled,
         )
+
+        if res.success:
+            delegate.log(f"--- [后台任务] 规则 【{rule.name}】 全部流程异步执行完毕 ---")
+        else:
+            delegate.log(f"--- [后台任务] 规则 【{rule.name}】 执行终止: {res.error} ---")
+
         self.finished_signal.emit(res)

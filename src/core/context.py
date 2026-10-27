@@ -156,6 +156,12 @@ class ExecutionContext:
     def __init__(self, table_data: Optional[Any] = None, initial_vars: Optional[Dict[str, Any]] = None):
         self.table_data = table_data
         self.variables: Dict[str, Any] = {}
+        if table_data is not None and hasattr(table_data, "rows") and hasattr(table_data, "cols"):
+            self.set_var("row", str(table_data.rows))
+            self.set_var("column", str(table_data.cols))
+            self.set_var("colunm", str(table_data.cols))  # alias for common spelling typo
+            self.set_var("rows", str(table_data.rows))
+            self.set_var("cols", str(table_data.cols))
         if initial_vars:
             for k, v in initial_vars.items():
                 self.set_var(k, v)

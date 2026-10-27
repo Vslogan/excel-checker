@@ -165,3 +165,56 @@ def test_if_else_zero_lines_no_else():
     assert "executed_then" not in res_f.variables  # skipped!
     assert res_f.variables.get("step3") == "200"
 
+
+def test_engine_row_and_column_unconditionally_assigned():
+    """Verify that row, column, and colunm are always initialized to actual table dimensions.
+
+    This must hold true regardless of whether fuzzy_row/fuzzy_col is enabled or table_size is exact.
+    """
+    engine = WorkflowEngine()
+
+    # Case 1: Fuzzy row and fuzzy col, copied table has 4 rows and 6 columns
+    fuzzy_rule = RuleConfig(
+        name="FuzzyEngineTest",
+        table_size=(1, 1),
+        fuzzy_row=True,
+        fuzzy_col=True,
+        workflow=[
+            {"action": "compute", "target_var": "r", "expression": "row"},
+            {"action": "compute", "target_var": "c", "expression": "column"},
+            {"action": "compute", "target_var": "typo_c", "expression": "colunm"},
+            {"action": "compute", "target_var": "area", "expression": "row * column"},
+        ]
+    )
+    grid_4x6 = [["val"] * 6 for _ in range(4)]
+    table_4x6 = TableData(grid_4x6)
+    assert table_4x6.rows == 4
+    assert table_4x6.cols == 6
+
+    res_fuzzy = engine.execute_rule(fuzzy_rule, table_4x6)
+    assert res_fuzzy.success
+    assert res_fuzzy.variables["row"] == "4"
+    assert res_fuzzy.variables["column"] == "6"
+    assert res_fuzzy.variables["colunm"] == "6"
+    assert res_fuzzy.variables["r"] == "4"
+    assert res_fuzzy.variables["c"] == "6"
+    assert res_fuzzy.variables["typo_c"] == "6"
+    assert res_fuzzy.variables["area"] == "24"
+
+    # Case 2: Exact matching size (2x3)
+    exact_rule = RuleConfig(
+        name="ExactEngineTest",
+        table_size=(2, 3),
+        workflow=[
+            {"action": "compute", "target_var": "dim_str", "expression": "strcat(row, 'x', column)"},
+        ]
+    )
+    table_2x3 = TableData([["a", "b", "c"], ["d", "e", "f"]])
+    res_exact = engine.execute_rule(exact_rule, table_2x3)
+    assert res_exact.success
+    assert res_exact.variables["row"] == "2"
+    assert res_exact.variables["column"] == "3"
+    assert res_exact.variables["colunm"] == "3"
+    assert res_exact.variables["dim_str"] == "2x3"
+
+

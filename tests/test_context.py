@@ -71,3 +71,15 @@ def test_headless_ui_delegate():
     assert delegate.messages[0]["title"] == "标题"
     delegate.set_clipboard("test_clip")
     assert delegate.get_clipboard() == "test_clip"
+
+
+def test_context_table_dimensions_initialization():
+    """Verify that ExecutionContext automatically populates row, column, colunm, rows, cols."""
+    table = TableData([["1", "2", "3"], ["4", "5", "6"]])
+    ctx = ExecutionContext(table_data=table)
+    assert ctx.get_var("row") == "2"
+    assert ctx.get_var("column") == "3"
+    assert ctx.get_var("colunm") == "3"
+    assert ctx.get_var("rows") == "2"
+    assert ctx.get_var("cols") == "3"
+
