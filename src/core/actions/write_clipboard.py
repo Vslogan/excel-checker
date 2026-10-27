@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core.actions.base import ActionResult, BaseAction
 from src.core.context import ExecutionContext, UIDelegate
+from src.core.expression import decode_escape_sequences
 
 
 class WriteClipboardAction(BaseAction):
@@ -33,31 +34,45 @@ class WriteClipboardAction(BaseAction):
         # Interpolate variables in data template
         rendered_data = context.render_template(self.data)
 
+        # Decode escape sequences (e.g. \t -> Tab, \n -> Newline, \r -> CR, \\ -> \)
+        rendered_text = decode_escape_sequences(str(rendered_data))
+
         final_clipboard_text = ""
 
         if self.data_type in ("table", "表格"):
-            # If input is CSV formatted (comma separated), parse and convert to TSV
+            # Table mode: convert to Excel native TSV (\t between columns, \r\n between rows)
             try:
                 if isinstance(rendered_data, list):
                     # List of lists
-                    rows = rendered_data
+                    tsv_lines = []
+                    for row in rendered_data:
+                        tsv_lines.append("\t".join(decode_escape_sequences(str(c)) for c in row))
+                    final_clipboard_text = "\r\n".join(tsv_lines)
+                elif "\t" in rendered_text:
+                    # Tab-separated table: preserve lines and tabs
+                    lines = [line.split("\t") for line in rendered_text.splitlines()]
+                    tsv_lines = ["\t".join(row) for row in lines]
+                    final_clipboard_text = "\r\n".join(tsv_lines)
                 else:
-                    reader = csv.reader(io.StringIO(str(rendered_data).strip()))
-                    rows = [row for row in reader]
-
-                tsv_lines = []
-                for row in rows:
-                    tsv_lines.append("\t".join(str(c) for c in row))
-                final_clipboard_text = "\r\n".join(tsv_lines)
+                    # CSV formatted (comma separated), parse and convert to TSV
+                    reader = csv.reader(io.StringIO(rendered_text.strip()))
+                    tsv_lines = []
+                    for row in reader:
+                        tsv_lines.append("\t".join(str(c) for c in row))
+                    final_clipboard_text = "\r\n".join(tsv_lines)
             except Exception as e:
-                ui_delegate.log(f"[WriteClipboard Warn] CSV parse error: {e}, falling back to raw text")
-                final_clipboard_text = str(rendered_data)
+                ui_delegate.log(f"[WriteClipboard Warn] Table parse error: {e}, falling back to raw decoded text")
+                final_clipboard_text = rendered_text
         else:
-            # Plain text
-            final_clipboard_text = str(rendered_data)
+            # Plain text mode: write decoded text
+            final_clipboard_text = rendered_text
 
         ui_delegate.set_clipboard(final_clipboard_text)
-        preview = final_clipboard_text.replace("\t", " [TAB] ").replace("\r\n", " [NEWLINE] ")
+        preview = (
+            final_clipboard_text.replace("\t", " [TAB] ")
+            .replace("\r\n", " [NEWLINE] ")
+            .replace("\n", " [NEWLINE] ")
+        )
         if len(preview) > 60:
             preview = preview[:60] + "..."
         ui_delegate.log(f"[WriteClipboard] Successfully wrote to clipboard (type={self.data_type}): {preview}")

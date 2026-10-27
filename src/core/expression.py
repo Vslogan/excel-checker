@@ -26,6 +26,45 @@ class ExpressionError(Exception):
 
 VAR_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
+ESCAPE_MAP = {
+    "t": "\t",
+    "n": "\n",
+    "r": "\r",
+    "\\": "\\",
+    '"': '"',
+    "'": "'",
+    "0": "\0",
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+}
+
+
+def decode_escape_sequences(s: str) -> str:
+    """Decode escape sequences (e.g. \\t, \\n, \\r, \\\\, \\\", \\\') into actual characters."""
+    if not isinstance(s, str) or "\\" not in s:
+        return s
+
+    def replace(match: re.Match) -> str:
+        esc = match.group(1)
+        if esc in ESCAPE_MAP:
+            return ESCAPE_MAP[esc]
+        if esc.startswith("u") and len(esc) == 5 and all(c in "0123456789abcdefABCDEF" for c in esc[1:]):
+            try:
+                return chr(int(esc[1:], 16))
+            except ValueError:
+                return match.group(0)
+        if esc.startswith("x") and len(esc) == 3 and all(c in "0123456789abcdefABCDEF" for c in esc[1:]):
+            try:
+                return chr(int(esc[1:], 16))
+            except ValueError:
+                return match.group(0)
+        return match.group(0)
+
+    pattern = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.DOTALL)
+    return pattern.sub(replace, s)
+
 
 def validate_variable_name(name: str) -> bool:
     """
@@ -86,11 +125,11 @@ class ExprParser:
         self.raw_text = text or ""
         self.vars = dict(variables or {})
 
-        # Pre-render {{var}} templates if present
+        # Pre-render {{var}} templates if present (using safe lambda to avoid regex escape group mangling)
         processed = self.raw_text
         for k, v in self.vars.items():
             pattern = r"\{\{\s*" + re.escape(k) + r"\s*\}\}"
-            processed = re.sub(pattern, str(v), processed)
+            processed = re.sub(pattern, lambda m, val=str(v): val, processed)
 
         self.tokens = self._tokenize(processed)
         self.pos = 0
@@ -105,15 +144,26 @@ class ExprParser:
                 i += 1
                 continue
 
-            # String literal
+            # String literal (supports escape sequences: \t, \n, \r, \\, \", \', \0, \a, \b, \f, \v, \uXXXX, \xXX)
             if ch in ('"', "'"):
                 quote = ch
                 i += 1
                 val_buf: List[str] = []
                 while i < n and s[i] != quote:
                     if s[i] == "\\" and i + 1 < n:
-                        val_buf.append(s[i + 1])
-                        i += 2
+                        next_ch = s[i + 1]
+                        if next_ch in ESCAPE_MAP:
+                            val_buf.append(ESCAPE_MAP[next_ch])
+                            i += 2
+                        elif next_ch == "u" and i + 5 < n and all(c in "0123456789abcdefABCDEF" for c in s[i + 2 : i + 6]):
+                            val_buf.append(chr(int(s[i + 2 : i + 6], 16)))
+                            i += 6
+                        elif next_ch == "x" and i + 3 < n and all(c in "0123456789abcdefABCDEF" for c in s[i + 2 : i + 4]):
+                            val_buf.append(chr(int(s[i + 2 : i + 4], 16)))
+                            i += 4
+                        else:
+                            val_buf.append(next_ch)
+                            i += 2
                     else:
                         val_buf.append(s[i])
                         i += 1

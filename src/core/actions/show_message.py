@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from src.core.actions.base import ActionResult, BaseAction
 from src.core.context import ExecutionContext, UIDelegate
+from src.core.expression import decode_escape_sequences
 
 
 class ShowMessageAction(BaseAction):
@@ -27,8 +28,8 @@ class ShowMessageAction(BaseAction):
         )
 
     def execute(self, context: ExecutionContext, ui_delegate: UIDelegate) -> ActionResult:
-        rendered_title = context.render_template(self.title)
-        rendered_content = context.render_template(self.content)
+        rendered_title = decode_escape_sequences(str(context.render_template(self.title)))
+        rendered_content = decode_escape_sequences(str(context.render_template(self.content)))
 
         ui_delegate.log(f"[ShowMessage] Displaying alert: [{rendered_title}] {rendered_content}")
         ui_delegate.show_message(rendered_title, rendered_content)

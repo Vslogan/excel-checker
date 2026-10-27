@@ -685,7 +685,7 @@ class WriteClipboardCard(BaseActionCard):
     color_border = "#ec4899"
 
     def setup_ui(self):
-        self.set_tip_text("若选择 table 类型，会将 CSV 逗号分割数据解析并以 Excel 原生表格格式 (TSV) 写入系统剪切板，粘贴时直接分列分行！")
+        self.set_tip_text("写入剪切板时支持转义字符（如 \\t 制表符、\\n 换行符等）与 {{变量}} 插值。table 类型以 Excel 原生表格格式 (TSV) 写入，粘贴时直接分行分列！")
 
         self.combo_type = QComboBox()
         self.combo_type.addItems(["table", "text"])
@@ -694,7 +694,7 @@ class WriteClipboardCard(BaseActionCard):
 
         self.edit_data = QTextEdit()
         self.edit_data.setMaximumHeight(70)
-        self.edit_data.setPlaceholderText("支持 {{变量}}。若选择 table，在此输入逗号分隔 CSV，例如:\n{{id}},{{newData}},{{index}}")
+        self.edit_data.setPlaceholderText("支持转义字符 \\t、\\n 及 {{变量}}。例如:\n{{id}}\\t{{newData}}\\n 或 CSV 逗号分隔格式")
         self.edit_data.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("写入数据内容:", self.edit_data)
 
@@ -767,20 +767,21 @@ class ComputeCard(BaseActionCard):
         tip = (
             "<b>计算 (Compute)</b><br/>"
             "输入左值变量名与右值复杂计算表达式：<br/>"
+            "• <b>字符串与转义字符</b>: 支持双引号/单引号字符串及转义序列: \\t (制表符), \\n (换行), \\r (回车), \\\" (双引号), \\\\ (反斜杠) 等<br/>"
             "• <b>四则运算与取模</b>: +, -, *, /, % (自动转换数字，默认最大保留6位非零小数)<br/>"
             "• <b>逻辑与比较运算</b>: && (与), || (或), ! (非), ==, !=, &lt;, &lt;=, &gt;, &gt;= (结果严格非零即一)<br/>"
-            "• <b>内置函数</b>: round(x, [n]), ceil(x), floor(x), str(x), substr(s, start, [len]), strcat(s1, s2, ...)<br/>"
-            "• 支持小括号优先级，例如: round({{price}} * 1.05 + ceil(total / 2), 2)"
+            "• <b>内置函数</b>: strcat(s1, s2, ...), substr(s, start, [len]), str(x), round(x, [n]), ceil(x), floor(x)<br/>"
+            "• 支持三元运算符 (条件 ? 成立 : 不成立) 及小括号优先级"
         )
         self.btn_tip.setToolTip(tip)
 
         self.edit_target_var = QLineEdit()
-        self.edit_target_var.setPlaceholderText("例如: res, count, final_price")
+        self.edit_target_var.setPlaceholderText("例如: res, line_data, final_price")
         self.edit_target_var.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("左值 (结果变量名):", self.edit_target_var)
 
         self.edit_expression = QLineEdit()
-        self.edit_expression.setPlaceholderText("例如: round({{price}} * {{count}} * 1.05, 2) 或 i + 1")
+        self.edit_expression.setPlaceholderText("例如: strcat(col1, \"\\t\", col2, \"\\n\") 或 round(val * 1.05, 2)")
         self.edit_expression.textChanged.connect(self.changed.emit)
         self.form_layout.addRow("右值 (计算表达式):", self.edit_expression)
 

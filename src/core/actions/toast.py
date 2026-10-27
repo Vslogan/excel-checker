@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from src.core.actions.base import ActionResult, BaseAction
 from src.core.context import ExecutionContext, UIDelegate
+from src.core.expression import decode_escape_sequences
 
 
 def parse_duration_ms(val: Any, default: int = 2000) -> int:
@@ -64,12 +65,12 @@ class ToastAction(BaseAction):
         )
 
     def execute(self, context: ExecutionContext, ui_delegate: UIDelegate) -> ActionResult:
-        # 1. Variable interpolation
-        rendered_content = context.render_template(self.content)
-        if rendered_content is None:
+        # 1. Variable interpolation & escape decoding
+        raw_rendered = context.render_template(self.content)
+        if raw_rendered is None:
             rendered_content = ""
         else:
-            rendered_content = str(rendered_content).strip()
+            rendered_content = decode_escape_sequences(str(raw_rendered)).strip()
 
         # Requirement 1: Supports empty content -> skip popup
         if not rendered_content:
